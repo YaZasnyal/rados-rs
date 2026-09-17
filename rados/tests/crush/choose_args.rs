@@ -116,10 +116,22 @@ fn choose_args_cli_fixture_keeps_empty_index_and_signed_hash_ids() {
         assert!(map.choose_args.contains_key(&1));
         assert!(map.choose_args[&1].iter().all(Option::is_none));
         assert!(!map.choose_args.contains_key(&0));
-        assert_eq!(
-            map.choose_args[&2][2].as_ref().unwrap().ids,
-            vec![-20, 30, -25]
-        );
+        for bucket in [-1, -2, -3, -4, -5] {
+            let bucket = map.get_bucket(bucket).unwrap();
+            assert_eq!(bucket.alg, BucketAlgorithm::Straw2);
+            assert_eq!(bucket.hash, 0);
+        }
+        assert_eq!(map.get_bucket(-1).unwrap().items, vec![0]);
+        assert_eq!(map.get_bucket(-2).unwrap().items, vec![1]);
+        assert_eq!(map.get_bucket(-3).unwrap().items, vec![-1, -2, -5]);
+        assert_eq!(map.get_bucket(-4).unwrap().items, vec![-3]);
+        assert_eq!(map.get_bucket(-5).unwrap().items, vec![2]);
+        assert_eq!(map.get_bucket(-3).unwrap().weight, 3 << 16);
+        assert_eq!(map.get_bucket(-4).unwrap().weight, 4 << 16);
+
+        let arg2 = map.choose_args[&2][2].as_ref().unwrap();
+        assert!(arg2.weight_set.is_empty());
+        assert_eq!(arg2.ids, vec![-20, 30, -25]);
         let arg = map.choose_args[&3][2].as_ref().unwrap();
         assert_eq!(
             arg.weight_set,
@@ -129,7 +141,28 @@ fn choose_args_cli_fixture_keeps_empty_index_and_signed_hash_ids() {
             ]
         );
         assert_eq!(arg.ids, vec![-20, -30, -25]);
+        let arg4 = map.choose_args[&4][1].as_ref().unwrap();
+        assert_eq!(arg4.weight_set, vec![vec![1 << 16], vec![3 << 16]]);
+        assert!(arg4.ids.is_empty());
         assert_eq!(map.choose_args[&5][0].as_ref().unwrap().ids, vec![-450]);
+        assert!(
+            map.choose_args[&5][0]
+                .as_ref()
+                .unwrap()
+                .weight_set
+                .is_empty()
+        );
+        let args6 = &map.choose_args[&6];
+        assert_eq!(args6[0].as_ref().unwrap().ids, vec![-450]);
+        assert_eq!(
+            args6[1].as_ref().unwrap().weight_set,
+            vec![vec![1 << 16], vec![3 << 16]]
+        );
+        assert!(args6[1].as_ref().unwrap().ids.is_empty());
+        assert_eq!(args6[2].as_ref().unwrap().weight_set, arg.weight_set);
+        assert_eq!(args6[2].as_ref().unwrap().ids, arg.ids);
+        assert!(args6[3].is_none());
+        assert!(args6[4].is_none());
     }
 }
 
@@ -191,6 +224,40 @@ fn decoder_rejects_text_and_truncated_choose_arg_data() {
     );
     let bytes = include_bytes!("reference/choose-args-quincy.crushmap");
     assert!(CrushMap::decode(&mut Bytes::from_static(&bytes[..bytes.len() - 1])).is_err());
+
+    // These are fully readable producer-byte mutations. They name the exact
+    // decoder guard, so a later EOF cannot accidentally make the test pass.
+    // The one-entry compat map is smaller and has a stable final choose-arg
+    // record: bucket-index follows its index, map-size and record-count.
+    let compat = include_bytes!("reference/choose-args-compat-quincy.crushmap");
+    let mut invalid_bucket = compat.to_vec();
+    let bucket_index = invalid_bucket.len() - 20;
+    assert_eq!(
+        &invalid_bucket[bucket_index..bucket_index + 4],
+        &[0, 0, 0, 0]
+    );
+    invalid_bucket[bucket_index] = 99;
+    let error = CrushMap::decode(&mut Bytes::from(invalid_bucket)).unwrap_err();
+    assert!(
+        error.to_string().contains("invalid bucket index"),
+        "{error}"
+    );
+
+    let mut invalid_weight = compat.to_vec();
+    let weight_len = invalid_weight.len() - 12;
+    assert_eq!(&invalid_weight[weight_len..weight_len + 4], &[1, 0, 0, 0]);
+    invalid_weight[weight_len] = 0;
+    let error = CrushMap::decode(&mut Bytes::from(invalid_weight)).unwrap_err();
+    assert!(error.to_string().contains("weight length"));
+
+    let mut invalid_ids = compat.to_vec();
+    let ids_len = invalid_ids.len() - 4;
+    assert_eq!(&invalid_ids[ids_len..ids_len + 4], &[0, 0, 0, 0]);
+    invalid_ids[ids_len] = 2;
+    invalid_ids.extend_from_slice(&123i32.to_le_bytes());
+    invalid_ids.extend_from_slice(&456i32.to_le_bytes());
+    let error = CrushMap::decode(&mut Bytes::from(invalid_ids)).unwrap_err();
+    assert!(error.to_string().contains("ID length"));
 }
 
 #[test]
@@ -267,6 +334,210 @@ fn qa_choose_args_transition_maps_decode_original_assertions() {
     let moved_tentacle =
         decode_fixture(include_bytes!("reference/qa-move-final-tentacle.crushmap"));
     assert_eq!(moved.choose_args, moved_tentacle.choose_args);
+}
+
+#[test]
+fn qa_choose_args_states_match_pinned_c_placement_vectors() {
+    // `qa-choose-args-vectors.txt` records pinned crushtool vectors for each
+    // decoded QA state. See its header for the index-0/default CLI adaptation.
+    let maps = [
+        (
+            "update",
+            include_bytes!("reference/qa-update-one-more-quincy.crushmap").as_slice(),
+            0,
+        ),
+        (
+            "no-update",
+            include_bytes!("reference/qa-no-update-one-more-quincy.crushmap").as_slice(),
+            0,
+        ),
+        (
+            "reweight",
+            include_bytes!("reference/qa-reweight-final-quincy.crushmap").as_slice(),
+            -1,
+        ),
+        (
+            "move",
+            include_bytes!("reference/qa-move-final-quincy.crushmap").as_slice(),
+            -1,
+        ),
+    ];
+    for (name, bytes, index) in maps {
+        let map = decode_fixture(bytes);
+        for line in include_str!("reference/qa-choose-args-vectors.txt")
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .filter(|line| line.starts_with(name))
+        {
+            let fields: Vec<i32> = line
+                .split_whitespace()
+                .skip(1)
+                .map(str::parse)
+                .collect::<Result<_, _>>()
+                .unwrap();
+            let mut actual = Vec::new();
+            crush_do_rule_with_choose_args(
+                &map,
+                0,
+                fields[0] as u32,
+                &mut actual,
+                2,
+                &[1 << 16; 3],
+                index,
+            )
+            .unwrap();
+            assert_eq!(actual, fields[1..], "{name} x={}", fields[0]);
+        }
+    }
+}
+
+#[test]
+fn qa_choose_args_published_transition_inventory_is_complete() {
+    // The upstream QA shell emits two exact text maps and grep assertions for
+    // the remaining transitions. Keep every published intermediate here until
+    // corresponding source-shaped compiled maps/vectors are added.
+    let states: Vec<_> = include_str!("reference/qa-choose-args-published-states.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .collect();
+    assert_eq!(states.len(), 16);
+    for required in [
+        "update-pre",
+        "update-add",
+        "update-remove",
+        "no-update-pre",
+        "no-update-add",
+        "no-update-remove",
+        "reweight-create",
+        "reweight-compat-osd0",
+        "reweight-add-osd2",
+        "reweight-canonical-osd2",
+        "reweight-compat-osd2",
+        "move-create",
+        "move-rack",
+        "move-compat-osd0",
+        "move-osd0-to-FOO",
+        "move-osd1-to-FOO",
+    ] {
+        assert!(states.iter().any(|state| state.starts_with(required)));
+    }
+}
+
+#[test]
+fn qa_intermediate_states_match_pinned_c_placement_vectors() {
+    let maps = [
+        (
+            "update-pre",
+            include_bytes!("reference/qa-update-pre-quincy.crushmap").as_slice(),
+            0,
+        ),
+        (
+            "update-remove",
+            include_bytes!("reference/qa-update-remove-quincy.crushmap").as_slice(),
+            0,
+        ),
+        (
+            "no-update-pre",
+            include_bytes!("reference/qa-no-update-pre-quincy.crushmap").as_slice(),
+            0,
+        ),
+        (
+            "no-update-remove",
+            include_bytes!("reference/qa-no-update-remove-quincy.crushmap").as_slice(),
+            0,
+        ),
+        (
+            "reweight-create",
+            include_bytes!("reference/qa-reweight-create-quincy.crushmap").as_slice(),
+            -1,
+        ),
+        (
+            "reweight-compat-osd0",
+            include_bytes!("reference/qa-reweight-compat-osd0-quincy.crushmap").as_slice(),
+            -1,
+        ),
+        (
+            "reweight-add-osd2",
+            include_bytes!("reference/qa-reweight-add-osd2-quincy.crushmap").as_slice(),
+            -1,
+        ),
+        (
+            "reweight-canonical-osd2",
+            include_bytes!("reference/qa-reweight-canonical-osd2-quincy.crushmap").as_slice(),
+            -1,
+        ),
+        (
+            "move-create",
+            include_bytes!("reference/qa-move-create-quincy.crushmap").as_slice(),
+            -1,
+        ),
+        (
+            "move-rack",
+            include_bytes!("reference/qa-move-rack-quincy.crushmap").as_slice(),
+            -1,
+        ),
+        (
+            "move-compat-osd0",
+            include_bytes!("reference/qa-move-compat-osd0-quincy.crushmap").as_slice(),
+            -1,
+        ),
+        (
+            "move-osd0-to-foo",
+            include_bytes!("reference/qa-move-osd0-to-foo-quincy.crushmap").as_slice(),
+            -1,
+        ),
+    ];
+    for (name, bytes, index) in maps {
+        let map = decode_fixture(bytes);
+        let (bucket_id, canonical, alternate) = match name {
+            "update-pre" | "update-remove" | "no-update-pre" | "no-update-remove" => (-2, 3, 2),
+            "reweight-create" => (-2, 6, 6),
+            "reweight-compat-osd0" => (-2, 6, 5),
+            "reweight-add-osd2" => (-2, 9, 5),
+            "reweight-canonical-osd2" => (-2, 10, 5),
+            "move-create" | "move-rack" => (-4, 6, 4),
+            "move-compat-osd0" => (-4, 6, 3),
+            "move-osd0-to-foo" => (-4, 3, 2),
+            _ => unreachable!(),
+        };
+        assert_eq!(
+            map.get_bucket(bucket_id).unwrap().weight,
+            (canonical as u32) << 16,
+            "{name}"
+        );
+        let arg = map.choose_args[&index][(-1 - bucket_id) as usize]
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            arg.weight_set[0].iter().sum::<u32>(),
+            (alternate as u32) << 16,
+            "{name}"
+        );
+        for line in include_str!("reference/qa-intermediate-vectors.txt")
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+            .filter(|line| line.starts_with(name))
+        {
+            let fields: Vec<i32> = line
+                .split_whitespace()
+                .skip(1)
+                .map(str::parse)
+                .collect::<Result<_, _>>()
+                .unwrap();
+            let mut actual = Vec::new();
+            crush_do_rule_with_choose_args(
+                &map,
+                0,
+                fields[0] as u32,
+                &mut actual,
+                2,
+                &[1 << 16; 3],
+                index,
+            )
+            .unwrap();
+            assert_eq!(actual, fields[1..], "{name} x={}", fields[0]);
+        }
+    }
 }
 
 fn choose_arg_vector_map() -> CrushMap {

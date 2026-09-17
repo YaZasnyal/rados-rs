@@ -159,6 +159,15 @@ are pinned-C compiled versions of the unchanged source maps in `fixtures/`.
 All QA generated maps use the enabled feature mask above; no Rust encoder
 produces them.
 
+`generate-qa-choose-args-states.py` writes the twelve local source-shaped
+intermediate QA maps named by `crush-choose-args.sh`; unchanged update/no-update
+add states remain fixtures. `qa-intermediate-vectors.txt` retains ten ordered
+`crushtool --test --show-mappings` rows for each intermediate state and
+`qa-choose-args-vectors.txt` does the same for the four final/add states.
+Both pins compile every map and produce identical rows. The update/no-update
+maps select index 0 in Rust; the oracle uses an identical default-index spelling
+because `crushtool` exposes no choose-index option.
+
 | Generated file | Original text input | SHA256 |
 | --- | --- | --- |
 | `bad-mappings-quincy.crushmap` | `bad-mappings.crushmap.txt` | `e676cdf4743655ebc5a8efcef7cdb97a0203b3ce6b3bcc0000018adc5ddb6990` |
