@@ -78,16 +78,16 @@ does not replace it.
 
 `choose-args/choose-args.crush` is an unmodified upstream CLI input; its
 Quincy and Tentacle transcripts are separate because Tentacle prints MSR
-tunables. `hosts.txt` is a source-shaped Rust adaptation of
-`check-invalid-map.t::cmd-01`, retained only to assert decoder rejection.
-`choose-args-compat.crush` is a documented text reconstruction of
-`CrushWrapperTest.choose_args_compat`: the compiler accepts the default
-signed index as its u64 wire spelling `18446744073709551615` and requires
-forward bucket references to be ordered after their definitions. It is not an
-upstream fixture.
+tunables. `qa-update-one-more.crush` and `qa-no-update-one-more.crush` are
+unmodified state maps published by `qa/standalone/crush-choose-args.sh` for
+`TEST_choose_args_update` and `TEST_no_update_weight_set`, respectively.
+Locally assembled compatibility, hosts-text rejection, and remaining QA state
+data live in [reference](../reference/README.md#choose-argument-fixtures).
 
 | File | Source | SHA256 |
 | --- | --- | --- |
 | `choose-args/choose-args.crush` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/choose-args.crush) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/choose-args.crush) | `fb2a66da99bbaa4e79a260ef6bb1432a55a0ed6475d1ca00594dcc83fd7dc8e5` |
 | `choose-args/choose-args-quincy.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/choose-args.t) | `0d99826efd55c7f82546d9cba11ef666b69fb12afb09f6bf1ea9229e79158939` |
 | `choose-args/choose-args-tentacle.t` | [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/choose-args.t) | `55673262931785674d1d047088ccf02dfa06ac87023948036e56e75408219cc9` |
+| `choose-args/qa-update-one-more.crush` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush-choose-args-expected-one-more-3.txt) | `28bc2c4b4029e2ad4474bd62b689f0e7ecc3e6b8fe2c1660ebca00de3728cc57` |
+| `choose-args/qa-no-update-one-more.crush` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush-choose-args-expected-one-more-0.txt) | `3460aba58ccbff4023e3126b77aca19c9ff97901b3f38a2a58d26072e775ba4e` |

@@ -185,10 +185,312 @@ fn decoder_rejects_text_and_truncated_choose_arg_data() {
     // is src/test/cli/crushtool/check-invalid-map.t::cmd-01.
     assert!(
         CrushMap::decode(&mut Bytes::from_static(include_bytes!(
-            "fixtures/choose-args/hosts.txt"
+            "reference/choose-args-hosts.txt"
         )))
         .is_err()
     );
     let bytes = include_bytes!("reference/choose-args-quincy.crushmap");
     assert!(CrushMap::decode(&mut Bytes::from_static(&bytes[..bytes.len() - 1])).is_err());
+}
+
+#[test]
+fn qa_choose_args_transition_maps_decode_original_assertions() {
+    // Exact upstream state maps published by crush-choose-args.sh:
+    // TEST_choose_args_update and TEST_no_update_weight_set.
+    let update = decode_fixture(include_bytes!(
+        "reference/qa-update-one-more-quincy.crushmap"
+    ));
+    let update_args = &update.choose_args[&0];
+    assert_eq!(
+        update_args[0].as_ref().unwrap().weight_set,
+        vec![vec![5 << 16], vec![5 << 16]]
+    );
+    assert_eq!(update_args[0].as_ref().unwrap().ids, vec![-10]);
+    assert_eq!(
+        update_args[1].as_ref().unwrap().weight_set,
+        vec![vec![2 << 16, 3 << 16], vec![2 << 16, 3 << 16]]
+    );
+    assert_eq!(update_args[1].as_ref().unwrap().ids, vec![-20, 1]);
+    let update_tentacle = decode_fixture(include_bytes!(
+        "reference/qa-update-one-more-tentacle.crushmap"
+    ));
+    assert_eq!(update.choose_args, update_tentacle.choose_args);
+
+    let no_update = decode_fixture(include_bytes!(
+        "reference/qa-no-update-one-more-quincy.crushmap"
+    ));
+    let no_update_args = &no_update.choose_args[&0];
+    assert_eq!(
+        no_update_args[0].as_ref().unwrap().weight_set,
+        vec![vec![2 << 16], vec![1 << 16]]
+    );
+    assert_eq!(
+        no_update_args[1].as_ref().unwrap().weight_set,
+        vec![vec![2 << 16, 0], vec![1 << 16, 0]]
+    );
+    assert_eq!(no_update_args[1].as_ref().unwrap().ids, vec![-20, 1]);
+    let no_update_tentacle = decode_fixture(include_bytes!(
+        "reference/qa-no-update-one-more-tentacle.crushmap"
+    ));
+    assert_eq!(no_update.choose_args, no_update_tentacle.choose_args);
+
+    // TEST_reweight and TEST_move_bucket publish tree totals rather than a
+    // text map. These local, source-shaped final states retain those exact
+    // canonical/compat totals and are decoded from pinned-C compiled bytes.
+    let reweight = decode_fixture(include_bytes!(
+        "reference/qa-reweight-final-quincy.crushmap"
+    ));
+    assert_eq!(reweight.get_bucket(-1).unwrap().weight, 10 << 16);
+    assert_eq!(
+        reweight.choose_args[&-1][0].as_ref().unwrap().weight_set,
+        vec![vec![9 << 16]]
+    );
+    assert_eq!(
+        reweight.choose_args[&-1][1].as_ref().unwrap().weight_set,
+        vec![vec![2 << 16, 3 << 16, 4 << 16]]
+    );
+    let reweight_tentacle = decode_fixture(include_bytes!(
+        "reference/qa-reweight-final-tentacle.crushmap"
+    ));
+    assert_eq!(reweight.choose_args, reweight_tentacle.choose_args);
+
+    let moved = decode_fixture(include_bytes!("reference/qa-move-final-quincy.crushmap"));
+    assert_eq!(moved.get_bucket(-3).unwrap().weight, 6 << 16);
+    assert_eq!(
+        moved.choose_args[&-1][0].as_ref().unwrap().weight_set,
+        vec![vec![0, 3 << 16]]
+    );
+    assert_eq!(
+        moved.choose_args[&-1][2].as_ref().unwrap().weight_set,
+        vec![vec![3 << 16, 0]]
+    );
+    let moved_tentacle =
+        decode_fixture(include_bytes!("reference/qa-move-final-tentacle.crushmap"));
+    assert_eq!(moved.choose_args, moved_tentacle.choose_args);
+}
+
+fn choose_arg_vector_map() -> CrushMap {
+    const W: u32 = 1 << 16;
+    let bucket = |id: i32, bucket_type: i32, items: Vec<i32>, weights: Vec<u32>| CrushBucket {
+        id,
+        bucket_type,
+        alg: BucketAlgorithm::Straw2,
+        hash: 0,
+        weight: weights.iter().sum(),
+        size: items.len() as u32,
+        items,
+        data: BucketData::Straw2 {
+            item_weights: weights,
+        },
+    };
+    let mut map = CrushMap::new();
+    map.max_devices = 4;
+    map.max_buckets = 3;
+    map.choose_local_tries = 0;
+    map.choose_local_fallback_tries = 0;
+    map.choose_total_tries = 50;
+    map.chooseleaf_descend_once = 1;
+    map.chooseleaf_vary_r = 1;
+    map.chooseleaf_stable = 1;
+    map.buckets = vec![
+        Some(bucket(-1, 2, vec![-2, -3], vec![2 * W, 2 * W])),
+        Some(bucket(-2, 1, vec![0, 1], vec![W, W])),
+        Some(bucket(-3, 1, vec![2, 3], vec![W, W])),
+    ];
+    let step = |op, arg1, arg2| CrushRuleStep { op, arg1, arg2 };
+    let rule = |rule_type, steps| {
+        Some(CrushRule {
+            rule_id: 0,
+            rule_type,
+            steps,
+        })
+    };
+    map.rules = vec![rule(
+        RuleType::Erasure,
+        vec![
+            step(RuleOp::Take, -1, 0),
+            step(RuleOp::ChooseFirstN, 3, 0),
+            step(RuleOp::Emit, 0, 0),
+        ],
+    )];
+    let choose_arg = |weight_set, ids| CrushChooseArg { weight_set, ids };
+    map.choose_args.insert(
+        -1,
+        vec![
+            Some(choose_arg(
+                vec![vec![2 * W, W], vec![W, 2 * W]],
+                vec![-20, 30],
+            )),
+            Some(choose_arg(vec![vec![W, 0], vec![0, W]], vec![-450, 30])),
+            Some(choose_arg(vec![vec![W, 0], vec![0, W]], vec![-20, -25])),
+        ],
+    );
+    map
+}
+
+fn choose_arg_rule(map: &mut CrushMap, scenario: i32) {
+    let step = |op, arg1, arg2| CrushRuleStep { op, arg1, arg2 };
+    let (rule_type, steps) = match scenario {
+        0 => (
+            RuleType::Erasure,
+            vec![
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseFirstN, 3, 0),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        1 => (
+            RuleType::Erasure,
+            vec![
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseIndep, 3, 0),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        2 => (
+            RuleType::Erasure,
+            vec![
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseLeafFirstN, 3, 1),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        3 => (
+            RuleType::Erasure,
+            vec![
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseLeafIndep, 3, 1),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        4 => (
+            RuleType::Erasure,
+            vec![
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseIndep, 2, 1),
+                step(RuleOp::ChooseIndep, 1, 0),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        5 => (
+            RuleType::MsrIndep,
+            vec![
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseMsr, 2, 1),
+                step(RuleOp::ChooseMsr, 2, 0),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        6 => (
+            RuleType::MsrFirstN,
+            vec![
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseMsr, 2, 1),
+                step(RuleOp::ChooseMsr, 2, 0),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        _ => unreachable!(),
+    };
+    map.rules[0] = Some(CrushRule {
+        rule_id: 0,
+        rule_type,
+        steps,
+    });
+}
+
+#[test]
+fn pinned_c_choose_argument_vectors_cover_all_rule_paths() {
+    // Local generator linked against unmodified Quincy/Tentacle mapper.c/hash.c:
+    // `python3 rados/tests/crush/reference/generate-choose-args-reference.py ../ceph --check`.
+    // Scenarios are FIRSTN, INDEP, recursive CHOOSELEAF variants, chained
+    // choices, and Tentacle's MSR path. Each uses position-dependent weights
+    // and signed replacement IDs for every bucket.
+    for line in include_str!("reference/choose-args-vectors.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+    {
+        let fields: Vec<_> = line
+            .split_whitespace()
+            .map(str::parse::<i32>)
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let (scenario, mode, x, n) = (fields[0], fields[1], fields[2], fields[3] as usize);
+        let expected = &fields[4..];
+        assert_eq!(expected.len(), n);
+        let mut map = choose_arg_vector_map();
+        choose_arg_rule(&mut map, scenario);
+        if mode == 0 {
+            map.choose_args.clear();
+        } else if mode == 1 {
+            map.choose_args.insert(7, vec![None; 3]);
+        } else {
+            let selected = map.choose_args.remove(&-1).unwrap();
+            map.choose_args.insert(7, selected);
+        }
+        let mut actual = Vec::new();
+        let weights = [
+            1 << 16,
+            if scenario >= 5 { 0 } else { 1 << 16 },
+            1 << 16,
+            1 << 16,
+        ];
+        crush_do_rule_with_choose_args(&map, 0, x as u32, &mut actual, 3, &weights, 7).unwrap();
+        assert_eq!(actual, expected, "scenario={scenario} mode={mode} x={x}");
+    }
+}
+
+#[test]
+fn pg_pool_index_uses_selected_default_absent_and_empty_choose_sets() {
+    // The first 100 C FIRSTN vectors also prove the placement-facing caller's
+    // pool-index selection, with pgp_num preserving each seed exactly.
+    let vectors: Vec<Vec<i32>> = include_str!("reference/choose-args-vectors.txt")
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| {
+            let fields: Vec<i32> = line
+                .split_whitespace()
+                .map(str::parse)
+                .collect::<Result<_, _>>()
+                .ok()?;
+            (fields[0] == 0).then_some(fields)
+        })
+        .collect();
+    for fields in vectors.iter().filter(|fields| fields[1] == 2) {
+        let x = fields[2] as u32;
+        let expected = fields[4..].to_vec();
+        let expected_for = |mode| {
+            vectors
+                .iter()
+                .find(|candidate| candidate[1] == mode && candidate[2] == x as i32)
+                .unwrap()[4..]
+                .to_vec()
+        };
+        let mut map = choose_arg_vector_map();
+        let selected = map.choose_args.remove(&-1).unwrap();
+        map.choose_args.insert(7, selected.clone());
+        map.choose_args.insert(-1, selected);
+        map.choose_args.insert(1, vec![None; 3]);
+        assert_eq!(
+            pg_to_osds(&map, PgId::new(7, x), 128, 0, &[1 << 16; 4], 3, false).unwrap(),
+            expected,
+            "selected x={x}"
+        );
+        assert_eq!(
+            pg_to_osds(&map, PgId::new(99, x), 128, 0, &[1 << 16; 4], 3, false).unwrap(),
+            expected,
+            "default x={x}"
+        );
+        assert_eq!(
+            pg_to_osds(&map, PgId::new(1, x), 128, 0, &[1 << 16; 4], 3, false).unwrap(),
+            expected_for(1),
+            "empty x={x}"
+        );
+        map.choose_args.remove(&-1);
+        assert_eq!(
+            pg_to_osds(&map, PgId::new(99, x), 128, 0, &[1 << 16; 4], 3, false).unwrap(),
+            expected_for(0),
+            "absent x={x}"
+        );
+    }
 }

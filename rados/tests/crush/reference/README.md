@@ -11,6 +11,7 @@ runner also links `builder.c` and `crush.c` to verify STRAW construction.
 | [reference-check.c](reference-check.c) | Recreates the four dedicated Tentacle MSR setups, `crush_weights.sh`, both `bad-mappings.t` cases, Quincy type-123 INDEP equivalence, and the three assertion-bearing STRAW/STRAW2 cases. |
 | [verify-reference.py](verify-reference.py) | Extracts pinned Ceph sources into a temporary directory, builds the C runner, and compares its results with an instrumented temporary copy of the Rust tests. |
 | [prepare-cli.py](prepare-cli.py) | Verifies original inputs against both pinned commits, compiles three text maps with pinned Docker tools, checks all seven upstream test command outputs, and writes six binary maps here. |
+| [choose-args-reference.c](choose-args-reference.c) / [generate-choose-args-reference.py](generate-choose-args-reference.py) | Generates the choose-argument C vectors from pinned `mapper.c` and `hash.c`. |
 
 For the functional reference comparison, run from the repository root:
 
@@ -135,6 +136,28 @@ inputs. Cargo tests consume only these checked-in bytes.
 | `choose-args-compat-quincy-legacy.crushmap` / `choose-args-compat-tentacle-legacy.crushmap` | `27d411d512ff7ce0306042903de13495919d9f0ec417c01923fc79c2273afc26` |
 | `choose-args-compat-quincy.crushmap` / `choose-args-compat-tentacle.crushmap` | `8dbb3ded6c68c6de7c1d8768c7d02b7cc4d170af175c8eb583811c04b41ab8a3` |
 | `choose-args-quincy.crushmap` / `choose-args-tentacle.crushmap` | `d5ee1e866b6c37fcfdd5edacba1e12395c2eed2278c3f0349fb926b6874a6286` |
+
+`choose-args-vectors.txt` has 2,100 ordered C vectors: direct FIRSTN and
+INDEP, both recursive CHOOSELEAF operations, chained choices, and Tentacle
+MSR INDEP/FIRSTN with an unavailable OSD. Every scenario covers absence,
+present-empty, and selected argument sets for seeds 0..99. Quincy and
+Tentacle must agree for the first five scenarios; the MSR rows are Tentacle
+only. Regenerate or check the checked-in output with:
+
+```sh
+python3 rados/tests/crush/reference/generate-choose-args-reference.py ../ceph --check
+```
+
+`choose-args-compat.crush`, `choose-args-hosts.txt`, `qa-reweight-final.crush`,
+and `qa-move-final.crush` are local reference inputs. The compatibility input
+reconstructs `CrushWrapperTest.choose_args_compat`; hosts text is the
+source-shaped `check-invalid-map.t` rejection input; the latter two retain the
+published final totals from `TEST_reweight` (10/9) and `TEST_move_bucket`
+(FOO 6/3, osd.0 3/3, osd.1 3/0). They are explicitly not upstream fixtures.
+`qa-update-one-more-quincy.crushmap` and `qa-no-update-one-more-quincy.crushmap`
+are pinned-C compiled versions of the unchanged source maps in `fixtures/`.
+All QA generated maps use the enabled feature mask above; no Rust encoder
+produces them.
 
 | Generated file | Original text input | SHA256 |
 | --- | --- | --- |

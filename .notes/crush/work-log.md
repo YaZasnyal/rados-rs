@@ -265,6 +265,26 @@ STRAW zero/perturbed weights and STRAW2 reweight. Choose arguments, device-class
 queries, retry counters, full OSDMap placement and live-cluster gates remain
 open; these CLI ports do not establish complete CRUSH compatibility.
 
+## Choose arguments differential completion — 2026-09-17
+
+The initial RED remains the production behavior failure recorded above.
+The first source-pinned differential attempt was a preparation mismatch in
+the locally assembled topology (host positional weights and zero local retry
+tunables), not a new mapper failure. After matching that C setup, all 2,100
+ordered rows pass: FIRSTN, INDEP, both recursive CHOOSELEAF forms, chained
+steps, and Tentacle MSR INDEP/FIRSTN with one unavailable OSD, each for
+absent, present-empty, and selected arguments across seeds 0..99. The PG
+caller additionally proves selected, default fallback, missing-without-default
+and present-empty pool indexes against the same C rows.
+
+The two exact QA state maps (`TEST_choose_args_update` and
+`TEST_no_update_weight_set`) are unmodified fixtures. `TEST_reweight` and
+`TEST_move_bucket` publish tree assertions rather than maps, so their final
+states are documented local reference inputs with the original 10/9 and
+FOO 6/3, osd.0 3/3, osd.1 3/0 values. All four decode from pinned-C compiled
+bytes. Locally assembled compatibility and hosts rejection inputs are also in
+`reference/`, preserving `fixtures/` for unchanged upstream files.
+
 ## Conventional retry overrides after 3919ba6 — 2026-09-17
 
 Completed the retry-regression row in continuation order 3. This adds local
