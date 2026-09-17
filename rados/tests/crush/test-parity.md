@@ -23,7 +23,7 @@ differs; otherwise verify and reuse the existing one.
 
 ## Ported tests
 
-**88 tests pass, none ignored.** These establish the scenarios below, not
+**90 tests pass, none ignored.** These establish the scenarios below, not
 complete CRUSH or end-to-end client compatibility.
 
 | Family | Ceph coverage retained | Rust tests | Status |
@@ -38,7 +38,7 @@ complete CRUSH or end-to-end client compatibility.
 | Legacy STRAW / STRAW2 weights, Quincy | `straw_zero` (10,000), `straw_same` (100,000), `straw2_reweight` (1,000,000) | [weights.rs](weights.rs) | Coverage: Ported; Readiness: Ready now; Verification: Passing. C-built STRAW lengths, output digests and unseeded C RNG realization are recorded in the reference runner. |
 | Insufficient mappings, both releases | `bad-mappings.t` rules 0/1, seed 1, ten replicas: exact FIRSTN short result and INDEP NONE slots | [golden.rs](golden.rs) `bad_mappings_compiled`; [functional.rs](functional.rs) `bad_mappings` | Passing with both compiled map encodings and the earlier direct setup; same two upstream cases |
 | Retry-profile observation, both releases | `show-choose-tries.t` rule 0 FIRSTN/count 2 and rule 1 INDEP/count 1: both full 50-bin profiles, distinct fresh commands | [profile.rs](profile.rs) | Passing with both compiled encodings; caller-owned batch profile accumulates, explicit start resets, and stop discards |
-| Device-class shadows, both releases | unchanged `device-class.crush`/`.t`; full decoded classes, all ten shadows, class buckets, source-produced TAKEs and C placement grid (rules 1/2, x=0..19, replicas 3) | [classes.rs](classes.rs) | Coverage: Ported; Readiness: Ready now; Verification: Passing. `split_id_class` returns the base bucket plus `Option<class>`; `None` is the Rust representation of C's class ID `-1`, and an unknown ID is `ItemNotFound` instead of C's `-EINVAL`. Editor/class-tree generation and reclassification mappings remain separate scope. |
+| Device classes and reclassification, both releases | decoded class/shadow lifecycle, ten successful `reclassify.t` pairs, and pinned C placement results | [classes.rs](classes.rs) | Coverage: Ported; Readiness: Ready now; Verification: Passing. Producer/editor APIs remain outside client scope. |
 | Additional mapper regressions | Eight local tests, including 12,600 vectors generated from pinned C mappers | [regressions.rs](regressions.rs) | Passing; additional coverage, not upstream test ports |
 
 The golden scenarios are `bobtail_tunables`, `firefly_tunables`,
