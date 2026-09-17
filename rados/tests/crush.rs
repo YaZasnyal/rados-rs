@@ -5,3 +5,6 @@ mod golden;
 
 #[path = "crush/functional.rs"]
 mod functional;
+
+#[path = "crush/regressions.rs"]
+mod regressions;

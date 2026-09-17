@@ -22,18 +22,30 @@ enum Family {
     FirstN,
 }
 
-fn straw_bucket(id: i32, bucket_type: i32, items: Vec<i32>, item_weight: u32) -> CrushBucket {
+fn bucket(id: i32, bucket_type: i32, items: Vec<i32>, item_weight: u32) -> CrushBucket {
     let size = items.len() as u32;
+    // build_*_map explicitly creates a STRAW root. insert_item creates the
+    // intermediate buckets with the optimal default algorithm, STRAW2.
+    let alg = if bucket_type == 5 {
+        BucketAlgorithm::Straw
+    } else {
+        BucketAlgorithm::Straw2
+    };
+    let item_weights = vec![item_weight; items.len()];
     CrushBucket {
         id,
         bucket_type,
-        alg: BucketAlgorithm::Straw,
+        alg,
         hash: 0,
         weight: item_weight * size,
         size,
-        data: BucketData::Straw {
-            item_weights: vec![item_weight; items.len()],
-            straws: vec![WEIGHT; items.len()],
+        data: if alg == BucketAlgorithm::Straw {
+            BucketData::Straw {
+                item_weights,
+                straws: vec![WEIGHT; items.len()],
+            }
+        } else {
+            BucketData::Straw2 { item_weights }
         },
         items,
     }
@@ -74,18 +86,15 @@ fn build_map(mode: Mode, family: Family, racks: usize, hosts: usize, osds: usize
             }
             let devices: Vec<_> = (next_osd..next_osd + osds as i32).collect();
             next_osd += osds as i32;
-            store_bucket(&mut map, straw_bucket(host_id, 1, devices, WEIGHT));
+            store_bucket(&mut map, bucket(host_id, 1, devices, WEIGHT));
         }
         let rack_id = rack_id.unwrap();
         rack_ids.push(rack_id);
-        store_bucket(
-            &mut map,
-            straw_bucket(rack_id, 3, host_ids, WEIGHT * osds as u32),
-        );
+        store_bucket(&mut map, bucket(rack_id, 3, host_ids, WEIGHT * osds as u32));
     }
     store_bucket(
         &mut map,
-        straw_bucket(-1, 5, rack_ids, WEIGHT * (hosts * osds) as u32),
+        bucket(-1, 5, rack_ids, WEIGHT * (hosts * osds) as u32),
     );
     map.max_buckets = map.buckets.len() as i32;
 
@@ -198,6 +207,7 @@ fn single_out_first(mode: Mode, family: Family) {
         assert_no_duplicates(&after, &format!("after {mode:?} {family:?} x={x}"));
         assert!(!after.contains(&before[0]));
         if family == Family::Indep {
+            assert_ne!(after[0], NONE);
             assert_eq!(&after[1..], &before[1..]);
         } else if mode == Mode::Msr {
             assert_eq!(&after[..2], &before[1..]);
@@ -220,6 +230,9 @@ fn single_out_last(mode: Mode, family: Family) {
         assert_eq!(after.len(), count, "{mode:?} {family:?} x={x}: {after:?}");
         assert_no_duplicates(&after, &format!("after {mode:?} {family:?} x={x}"));
         assert!(!after.contains(&before[last]));
+        if family == Family::Indep {
+            assert_ne!(after[last], NONE);
+        }
         assert_eq!(&after[..last], &before[..last]);
     }
 }

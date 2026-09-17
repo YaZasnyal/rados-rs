@@ -4,15 +4,19 @@ Inventory date: 2026-09-17. Rust baseline: `9388052` on `main`, before the
 `docs/crush-test-parity` branch (documentation first, then Stage 1 tests). Policy:
 [Testing requirements](../../../.claude/TESTING.md).
 
-**All 12 golden integration scenarios now pass**, checking all 87,040
-ordered mappings and result-size histograms shared by the pinned releases.
+**All 47 CRUSH integration tests pass**: 12 golden scenarios, 28 Tentacle
+functional variants and 7 local regression tests. The original goldens check
+87,040 ordered mappings and result-size histograms shared by the pinned
+releases; the regressions add 11,200 vectors generated from the C mapper.
 The original failing run and the fixes are recorded in
-[Stage 1](#stage-1-execution), [Stage 2](#stage-2-mapper-fixes), and
-[Stage 3](#stage-3-tentacle-functional-ports).
+[Stage 1](#stage-1-execution), [Stage 2](#stage-2-mapper-fixes),
+[Stage 3](#stage-3-tentacle-functional-ports), and
+[Stage 4](#stage-4-functional-mapper-fixes), and
+[Stage 5](#stage-5-source-audit-regressions).
 This verifies these fixtures, not every possible CRUSH input or the full
 placement pipeline.
 
-Navigation: [Stage 3 functional ports](#stage-3-tentacle-functional-ports) · [Stage 2 fixes](#stage-2-mapper-fixes) · [Stage 1 execution](#stage-1-execution) · [Current Rust coverage](#current-rust-coverage) ·
+Navigation: [Stage 5 audit regressions](#stage-5-source-audit-regressions) · [Stage 4 functional fixes](#stage-4-functional-mapper-fixes) · [Stage 3 functional ports](#stage-3-tentacle-functional-ports) · [Stage 2 fixes](#stage-2-mapper-fixes) · [Stage 1 execution](#stage-1-execution) · [Current Rust coverage](#current-rust-coverage) ·
 [Prerequisites](#prerequisites-and-disposition-reasons) ·
 [Mapper](#mapper-unit-tests) · [Wrapper](#crushwrapper-unit-tests) ·
 [CLI](#crushtool-cases) · [Fixtures](#fixture-and-helper-catalogue) ·
@@ -88,9 +92,9 @@ variants; both must be preserved.
 | Primary unit suite | Source definitions | Expanded variants | Ready now | Blocked | Outside client scope | Verified ports |
 | --- | --- | --- | --- | --- | --- | --- |
 | v17.2.7: mapper + wrapper | 33 | 33 | 1 | 14 | 18 | 0 |
-| v20.2.4: mapper + wrapper | 46 | 60 | 33 | 9 | 18 | 13 |
+| v20.2.4: mapper + wrapper | 46 | 60 | 33 | 9 | 18 | 28 |
 
-Each Ready-now unit total includes one `straw2_stddev` diagnostic without a distribution assertion. Stage 3 ports 28 Tentacle variants, of which 13 are verified passing; other source definitions have Coverage: Not ported. Expanded variants do not represent additional upstream definitions.
+Each Ready-now unit total includes one `straw2_stddev` diagnostic without a distribution assertion. Stages 3 and 4 port and verify 28 Tentacle variants; other source definitions have Coverage: Not ported. Expanded variants do not represent additional upstream definitions.
 
 | Other catalogue | v17.2.7 | v20.2.4 | Counting unit |
 | --- | --- | --- | --- |
@@ -215,14 +219,19 @@ Base: `81d34c8`. This test-only stage adds
 **28 ported variants**. Coverage: Ported; Readiness: Ready now; Review:
 Pending. Verification is recorded per variant below.
 
-The setup reproduces `build_indep_map` and `build_firstn_map`: optimal
-tunables, a STRAW root, rack and host hierarchy, equal fixed-point weights,
+The setup now reproduces `build_indep_map` and `build_firstn_map`: optimal
+tunables, a STRAW root, STRAW2 racks and hosts, equal fixed-point weights,
 the original rule steps and the bucket allocation order produced by
 `CrushWrapper::insert_item`. The Rust adaptation constructs that map directly
 because this client has no CRUSH editor. Assertions retain the original seed
 ranges, requested result sizes, holes, uniqueness, positional stability,
 movement bounds and retry overrides. Upstream supplies behavioral assertions,
 not exact output vectors, for these cases.
+
+Audit correction: Stage 3 initially used STRAW for every bucket and omitted
+the explicit non-NONE replacement assertions in two INDEP scenarios.
+Stage 5 corrects both issues. The historical Stage 3/4 results below describe
+the original test setup; only Stage 5 verifies the corrected port.
 
 `cargo test -p rados --test crush --offline --no-fail-fast` completed all 40
 tests: the existing 12 goldens and 13 functional variants passed; 15 functional
@@ -249,6 +258,124 @@ These failures are the baseline for a separate mapper-fix stage. In
 particular, the MSR rule currently executes each `ChooseMsr` step against the
 final result width and filters holes before `Emit`; the failing tests show the
 observable consequences without prescribing the fix.
+
+## Stage 4 functional mapper fixes
+
+Base: `f0717e5`. The 28 Stage 3 tests and their expectations are unchanged.
+The implementation changes are intentionally left uncommitted for review.
+
+- INDEP now keeps failure-domain and leaf results in separate positional
+  arrays, retains the original replica index during recursive leaf selection,
+  uses Ceph's uniform-bucket retry stride, and applies the rule's separate
+  chooseleaf retry budget.
+- MSR rules now execute complete `TAKE -> CHOOSE_MSR* -> EMIT` blocks. Each
+  choose level retains its collision workspace; selection uses the same
+  stride ranges, retry value, local collision attempts, failed-descent undo,
+  and FIRSTN-versus-INDEP emission order as Tentacle
+  `crush_msr_do_rule`/`crush_msr_choose`.
+
+Validation on the uncommitted review tree:
+
+- `cargo test -p rados --test crush --offline --no-fail-fast`: **40 passed**,
+  0 failed, 0 ignored. This includes all 28 functional variants and the 12
+  unchanged golden scenarios.
+- `cargo test -p rados --lib crush:: --offline`: **26 passed**, 0 failed,
+  1 pre-existing corpus test ignored.
+- `cargo test --workspace --lib --offline`: **456 passed**, 0 failed,
+  1 pre-existing corpus test ignored; the macros crate has no unit tests.
+
+Coverage remains limited to the imported scenarios. The four dedicated MSR
+topologies, multi-root MSR, unequal fanout and malformed-rule behavior remain
+listed below and are not established by these results.
+
+## Stage 5 source-audit regressions
+
+Base: `f0717e5` plus the uncommitted Stage 4 changes. All changes remain
+uncommitted for review. This stage resolves the eight source-audit findings;
+it does not claim complete mapper parity.
+
+Corrections in [mapper.rs](../../src/crush/mapper.rs):
+
+- Conventional INDEP skips devices and unresolved work positions before
+  invoking the bucket chooser, matching the FIRSTN executor's guard.
+- Conventional rules skip CHOOSE_MSR instead of panicking. FIRSTN honors
+  SetChooseLeafTries before falling back to chooseleaf_descend_once.
+- EMIT clears the working set. An invalid MSR block clears the entire
+  returned vector, including output from an earlier valid block. The device
+  TAKE followed by CHOOSE_MSR case also returns an empty vector.
+- MSR rejects negative fanouts before casting or allocating the undo vector,
+  returning `CrushError::InvalidMsrFanout`. This is a Rust safety contract:
+  the C mapper does not safely validate these values. Internal workspace
+  checks return typed errors in place of the Stage 4 `expect` calls.
+- [functional.rs](functional.rs) uses STRAW only for the explicitly created
+  root and STRAW2 for hosts/racks, as `insert_item` does with optimal tunables.
+  Both single-OSD INDEP cases now assert that the replacement is not NONE.
+  The corrected 28 variants passed before any Stage 5 mapper changes.
+
+Setup references:
+[build_indep_map](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L71),
+[insert_item](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/CrushWrapper.cc#L1165),
+[default bucket algorithm](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/CrushWrapper.h#L376).
+
+The seven new tests in [regressions.rs](regressions.rs) are local differential
+cases, not named upstream ports. Each has an adjacent source reference.
+Their common status is **Coverage: Ported (local scenarios); Readiness:
+Ready now; Verification: Passing; Review: Pending**. They do not increase
+the upstream-port totals in the inventory.
+
+| Rust test | Variants / asserted behavior | Before fixes |
+| --- | --- | --- |
+| `chained_indep_skips_unresolved_domains` | Three requested hosts, two available; subsequent INDEP over surviving hosts; all ordered vectors including holes. | Failing: InvalidBucketId(NONE). |
+| `firstn_honors_explicit_leaf_retries` | Explicit leaf tries 10, map total retries 0, descend_once 1; all out masks. | Failing: mask 1, x=1 expected [1], got []. |
+| `conventional_rules_skip_choose_msr` | Replicated and Erasure; unknown opcode leaves the working root unchanged. | Failing: panic. |
+| `malformed_msr_blocks_discard_output` | MSR FIRSTN/INDEP; conventional CHOOSE, missing TAKE/EMIT, invalid second block, device TAKE with CHOOSE. | Failing: prior output or NONE vector retained. |
+| `emit_clears_working_set` | TAKE device, EMIT, EMIT; output [0] exactly once. | Failing: [0,0]. |
+| `msr_truncated_fanout_matches_ceph_for_every_out_mask` | MSR FIRSTN/INDEP; fanout 2 hosts x 2 OSDs, result limit 3, all 16 out masks and 100 seeds. | Already passing: 3,200 vectors. |
+| `msr_rejects_negative_fanout` | Rust contract; both MSR types, -1 and i32::MIN, outer and nested CHOOSE_MSR. | Failing: capacity-overflow panic. |
+
+Reference search, in both pinned releases:
+
+```sh
+git -C ../ceph grep -n -E 'SetChooseLeafTries|set_chooseleaf_tries|CHOOSE_MSR|choosemsr|CRUSH_ITEM_NONE' <commit> -- src/test/crush src/test/cli/crushtool src/test/osd src/test/librados src/test/neorados qa/workunits/crush
+```
+
+The search found the existing functional tests and CLI retry settings, but
+no named counterpart for these exact malformed-rule or chained-INDEP
+regressions, and no safe-negative-MSR-fanout test. Expected results therefore
+come from executing unmodified pinned C sources. The negative-fanout test
+is labeled `Rust contract; no upstream analogue found`.
+
+[Fixture provenance and the tested regeneration command](fixtures/README.md#generated-mapper-regressions)
+include the C input generator, source revisions, compiler, SHA256 and all
+inputs. No Ceph tools or checkout are needed to run the Rust tests.
+The C comparison established identical output for 6,400 conventional-rule
+vectors in Quincy/Tentacle. Another 4,800 stored vectors cover Tentacle MSR;
+the four additional malformed MSR inputs returned empty for all 6,400
+seed/mask combinations. Rust tests compare full ordered vectors and validate
+the stored fixture's complete record sequence and lengths.
+
+Validation on macOS, default Rust features:
+
+- `cargo test -p rados --test crush regressions:: --offline`: before fixes,
+  **1 passed / 6 failed**; afterwards **7 passed**, 0 ignored.
+- `cargo test -p rados --test crush --offline`: **47 passed**, 0 ignored.
+- `cargo test --workspace --lib --offline`: **456 passed**, 1 pre-existing
+  corpus test ignored. Two existing loopback TCP tests needed execution
+  outside the sandbox; their sandbox failures were PermissionDenied.
+- The README regeneration command rebuilt both C oracles and reproduced
+  the checked-in fixture and the cross-release comparisons.
+- `cargo fmt --all -- --check`, `git diff --check`, fixture SHA256 checks
+  and local documentation-link checks passed.
+- `cargo clippy --workspace --all-targets --all-features --offline -- --no-deps -D warnings`
+  remains blocked by the two existing unused `OSD_STAT_INTERFACES_*`
+  constants in `osdclient/pgmap_types.rs`.
+- `cargo clippy -p rados --lib --test crush --offline -- -D warnings -A dead-code`
+  passed. No repository lint settings were changed.
+
+Remaining scope: the four dedicated upstream MSR topologies and multi-root
+tests are still not ported. These tests do not establish complete unequal
+fanout, bucket-algorithm, choose-argument, per-rule local-retry override, or
+malformed-map coverage. No live-cluster placement check was run.
 
 ## Current Rust coverage
 

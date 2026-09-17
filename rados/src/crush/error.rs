@@ -17,6 +17,12 @@ pub enum CrushError {
     #[error("Invalid rule type: {0}")]
     InvalidRuleType(u8),
 
+    #[error("MSR fanout must be nonnegative: {0}")]
+    InvalidMsrFanout(i32),
+
+    #[error("Invalid rule execution state: {0}")]
+    InvalidRuleState(&'static str),
+
     #[error("Decode error: {0}")]
     DecodeError(String),
 
