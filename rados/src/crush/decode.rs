@@ -120,26 +120,63 @@ impl CrushMap {
             map.class_bucket = HashMap::decode(data, 0)?;
         }
 
-        // Skip choose_args (complex per-bucket weight sets, not needed for placement).
+        // Choose args are producer-provided CRUSH alternatives. Rust consumes
+        // these fixtures; it does not implement a CRUSH map encoder.
         if data.remaining() > 0 {
             let choose_args_size = u32::decode(data, 0)?;
+            if choose_args_size > map.buckets.len() as u32 {
+                return Err(CrushError::DecodeError(format!(
+                    "Too many choose-argument sets: {choose_args_size}"
+                )));
+            }
             for _ in 0..choose_args_size {
-                let _choose_args_index = u64::decode(data, 0)?;
+                let choose_args_index = i64::decode(data, 0)?;
                 let size = u32::decode(data, 0)?;
+                if size > map.buckets.len() as u32 {
+                    return Err(CrushError::DecodeError(format!(
+                        "Too many choose-argument buckets: {size}"
+                    )));
+                }
+                let mut args = vec![None; map.buckets.len()];
                 for _ in 0..size {
-                    let _bucket_index = u32::decode(data, 0)?;
+                    let bucket_index = u32::decode(data, 0)? as usize;
+                    let bucket = map
+                        .buckets
+                        .get(bucket_index)
+                        .and_then(Option::as_ref)
+                        .ok_or_else(|| {
+                            CrushError::DecodeError(format!(
+                                "Choose argument references invalid bucket index {bucket_index}"
+                            ))
+                        })?;
                     let weight_set_positions = u32::decode(data, 0)?;
+                    if weight_set_positions > 10_000 {
+                        return Err(CrushError::DecodeError(format!(
+                            "Too many choose-argument positions: {weight_set_positions}"
+                        )));
+                    }
+                    let mut weight_set = Vec::with_capacity(weight_set_positions as usize);
                     for _ in 0..weight_set_positions {
                         let ws_size = u32::decode(data, 0)?;
-                        for _ in 0..ws_size {
-                            let _weight = u32::decode(data, 0)?;
+                        if ws_size != bucket.size {
+                            return Err(CrushError::DecodeError(format!(
+                                "Choose argument weight length {ws_size} does not match bucket {} size {}",
+                                bucket.id, bucket.size
+                            )));
                         }
+                        weight_set.push(decode_n(data, ws_size as usize)?);
                     }
                     let ids_size = u32::decode(data, 0)?;
-                    for _ in 0..ids_size {
-                        let _id = i32::decode(data, 0)?;
+                    if ids_size != 0 && ids_size != bucket.size {
+                        return Err(CrushError::DecodeError(format!(
+                            "Choose argument ID length {ids_size} does not match bucket {} size {}",
+                            bucket.id, bucket.size
+                        )));
                     }
+                    let ids = decode_n(data, ids_size as usize)?;
+                    args[bucket_index] = Some(CrushChooseArg { weight_set, ids });
                 }
+                map.choose_args.insert(choose_args_index, args);
             }
         }
 

@@ -19,7 +19,7 @@ cargo test -p rados --test crush --offline
 
 ## Ported tests
 
-**63 tests pass, none ignored.** These establish the scenarios below, not
+**69 tests pass, none ignored.** These establish the scenarios below, not
 complete CRUSH or end-to-end client compatibility.
 
 | Family | Ceph coverage retained | Rust tests | Status |
@@ -131,7 +131,7 @@ This is the continuation order. “Not ported” does not mean unsupported;
 | --- | --- | --- |
 | 3 | Remaining Quincy mapper cases, STRAW zero/perturbed weights, STRAW2 reweight | Passing; five cases reuse their existing NORMAL ports after the raw-123/type-3 proof, and three assertion-bearing weight cases retain original setup/RNG outcome |
 | 3 | Zero/nonpositive rule retry settings | Passing; local C-reference cases retain positive, zero, negative and repeated override semantics for conventional FIRSTN and recursive chooseleaf |
-| 4 | Choose arguments: positional weights/IDs and legacy encoding fallback | Missing support: decoder discards choose arguments; import `choose_args_compat` and CLI fixtures after retaining/selecting them |
+| 4 | Choose arguments: positional weights/IDs and legacy encoding fallback | Coverage: Partial; Readiness: Ready now; Verification: Passing offline fixture decode/selection. `choose_args_compat` retains default `-1`, the 666× positional weight and legacy folding; CLI fixture retains empty index 1 and signed hash IDs. Remaining: full local C vectors for all QA transition states and explicit C MSR choose-arg differential corpus. |
 | 4 | Device-class shadow mapping, hierarchy/location queries, retry counters | Incomplete coverage; import class maps and implement the missing query/observation APIs |
 | 5 | OSDMap raw/up/acting sets, primary/affinity, EC positions and map transitions | Not ported as a complete reference suite; capture original OSDMap setup/deltas |
 | 5 | Original client I/O and pool scenarios on both releases | Not run; requires matching clusters |

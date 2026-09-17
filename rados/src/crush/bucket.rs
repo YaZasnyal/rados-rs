@@ -3,16 +3,27 @@
 
 use crate::crush::hash::{crush_hash32_3, crush_hash32_4};
 use crate::crush::mapper::CRUSH_ITEM_NONE;
-use crate::crush::types::{BucketAlgorithm, BucketData, CrushBucket};
+use crate::crush::types::{BucketAlgorithm, BucketData, CrushBucket, CrushChooseArg};
 use crate::denc::constants::crush::{FIXED_POINT_MASK, LN_LOOKUP_OFFSET};
 
 /// Select an item from a bucket using the appropriate algorithm
 pub fn bucket_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
+    bucket_choose_with_arg(bucket, x, r, None, 0)
+}
+
+/// Select an item, applying the optional Ceph choose argument for STRAW2.
+pub(crate) fn bucket_choose_with_arg(
+    bucket: &CrushBucket,
+    x: u32,
+    r: u32,
+    arg: Option<&CrushChooseArg>,
+    position: usize,
+) -> i32 {
     if bucket.size == 0 {
         return CRUSH_ITEM_NONE;
     }
     match bucket.alg {
-        BucketAlgorithm::Straw2 => bucket_straw2_choose(bucket, x, r),
+        BucketAlgorithm::Straw2 => bucket_straw2_choose(bucket, x, r, arg, position),
         BucketAlgorithm::Uniform => bucket_perm_choose(bucket, x, r),
         BucketAlgorithm::List => bucket_list_choose(bucket, x, r),
         BucketAlgorithm::Tree => bucket_tree_choose(bucket, x, r),
@@ -84,11 +95,27 @@ fn generate_exponential_distribution(x: u32, y: i32, z: u32, weight: u32) -> i64
 /// Straw2 bucket selection (modern, optimal algorithm)
 /// Each item draws a straw based on exponential distribution
 /// Item with longest straw (highest draw value) wins
-fn bucket_straw2_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
-    let weights = match &bucket.data {
+fn bucket_straw2_choose(
+    bucket: &CrushBucket,
+    x: u32,
+    r: u32,
+    arg: Option<&CrushChooseArg>,
+    position: usize,
+) -> i32 {
+    let base_weights = match &bucket.data {
         BucketData::Straw2 { item_weights } => item_weights,
         _ => unreachable!("bucket_straw2_choose called on non-Straw2 bucket"),
     };
+    let weights = arg
+        .and_then(|arg| {
+            arg.weight_set
+                .get(position.min(arg.weight_set.len().saturating_sub(1)))
+        })
+        .filter(|weights| weights.len() == bucket.items.len())
+        .unwrap_or(base_weights);
+    let ids = arg
+        .filter(|arg| arg.ids.len() == bucket.items.len())
+        .map_or(&bucket.items, |arg| &arg.ids);
 
     tracing::trace!(
         "bucket_straw2_choose: bucket_id={}, x={}, r={}, size={}",
@@ -103,7 +130,7 @@ fn bucket_straw2_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
 
     for (i, &weight) in weights.iter().enumerate().take(bucket.size as usize) {
         let draw = if weight > 0 {
-            generate_exponential_distribution(x, bucket.items[i], r, weight)
+            generate_exponential_distribution(x, ids[i], r, weight)
         } else {
             i64::MIN
         };
@@ -277,15 +304,15 @@ mod tests {
         };
 
         // Should return a valid item
-        let item = bucket_straw2_choose(&bucket, 123, 0);
+        let item = bucket_straw2_choose(&bucket, 123, 0, None, 0);
         assert!((0..=2).contains(&item));
 
         // Same input should give same output (deterministic)
-        let item2 = bucket_straw2_choose(&bucket, 123, 0);
+        let item2 = bucket_straw2_choose(&bucket, 123, 0, None, 0);
         assert_eq!(item, item2);
 
         // Different input should potentially give different output
-        let _item3 = bucket_straw2_choose(&bucket, 456, 0);
+        let _item3 = bucket_straw2_choose(&bucket, 456, 0, None, 0);
     }
 
     #[test]

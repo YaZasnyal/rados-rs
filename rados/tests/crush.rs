@@ -11,3 +11,6 @@ mod regressions;
 
 #[path = "crush/weights.rs"]
 mod weights;
+
+#[path = "crush/choose_args.rs"]
+mod choose_args;

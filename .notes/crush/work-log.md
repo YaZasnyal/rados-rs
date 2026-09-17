@@ -106,6 +106,32 @@ must not count as an executed compatibility gate. Uniform/list/tree and
 full OSDMap placement still need their listed coverage. Passing these six
 tests does not close those gaps.
 
+## Choose arguments after 924da25 — 2026-09-17
+
+Read both pinned `CrushWrapperTest.choose_args_compat`, `mapper.c` STRAW2
+choose-argument callers, `CrushWrapper` encode/decode and fallback helpers,
+the CLI `choose-args.crush/.t`, `crush-choose-args.sh`, and
+`check-invalid-map.t`. The source search found the unit, CLI and QA families;
+QA monitor mutation responses remain producer-only while their published map
+effects require a later complete C-vector corpus.
+
+The focused port records a genuine initial behavior failure:
+`default_choose_args_override_straw2_weights` at `x=2` returned `[1]` before
+selection applied the default alternative, expected `[0]`. The unchanged test
+passes after the mapper applies retained weights and IDs through FIRSTN,
+INDEP, recursive chooseleaf and MSR paths. `pg_to_osds` supplies the pool ID;
+an existing empty index suppresses default fallback, while an absent index
+uses `-1`.
+
+Fixtures are C++ producer outputs from both pinned images and the restored,
+verified Quincy dencoder. Feature masks are `432345564227567616` and
+`432345564229664768`; commands and hashes are in `reference/README.md`.
+Cargo consumes fixture bytes only and has no Rust encoder. Decoder contracts
+reject source-shaped hosts text and truncation; no upstream Rust-contract
+analogue was found. Coverage: Partial; Readiness: Ready now; Verification:
+focused offline tests passing. Remaining C mapping vectors include QA
+update/no-update/reweight/move states and all choose-arg MSR paths.
+
 ## Continuation after 94ecb01 — 2026-09-17
 
 Started point 3 with the placement assertions in `bad-mappings.t`. The initial

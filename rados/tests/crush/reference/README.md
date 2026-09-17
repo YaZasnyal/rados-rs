@@ -114,6 +114,28 @@ All three Tentacle binaries equal the respective Quincy bytes followed by
 two little-endian u32 MSR defaults (100/100). Both encodings are checked in
 and decoded by Cargo tests, which need neither Docker nor a Ceph checkout.
 
+## Choose-argument fixtures
+
+`choose-args-compat-*.crushmap` is produced by each pinned `crushtool` from
+the documented `choose_args_compat` setup, then re-encoded by its matching
+`ceph-dencoder type CrushWrapper ... set_features ... encode`. The feature
+masks are `CRUSH_TUNABLES5|INCARNATION_2` (`432345564227567616`) and that
+mask plus `CRUSH_CHOOSE_ARGS` (`432345564229664768`). Quincy uses the
+verified official-package dencoder documented in `.renchik/test-parity/reference-tools.md`.
+No Rust encoder produces these bytes. The enabled fixtures retain default
+index `-1`, one b1 position and weight `666 * 65536`; legacy fixtures contain
+no choose set and b1's base weight is `666 * 65536`.
+
+`choose-args-{quincy,tentacle}.crushmap` is the matching enabled encoding of
+the unmodified CLI map. It retains the empty index 1 and signed IDs as hash
+inputs. Cargo tests consume only these checked-in bytes.
+
+| Generated file | SHA256 |
+| --- | --- |
+| `choose-args-compat-quincy-legacy.crushmap` / `choose-args-compat-tentacle-legacy.crushmap` | `27d411d512ff7ce0306042903de13495919d9f0ec417c01923fc79c2273afc26` |
+| `choose-args-compat-quincy.crushmap` / `choose-args-compat-tentacle.crushmap` | `8dbb3ded6c68c6de7c1d8768c7d02b7cc4d170af175c8eb583811c04b41ab8a3` |
+| `choose-args-quincy.crushmap` / `choose-args-tentacle.crushmap` | `d5ee1e866b6c37fcfdd5edacba1e12395c2eed2278c3f0349fb926b6874a6286` |
+
 | Generated file | Original text input | SHA256 |
 | --- | --- | --- |
 | `bad-mappings-quincy.crushmap` | `bad-mappings.crushmap.txt` | `e676cdf4743655ebc5a8efcef7cdb97a0203b3ce6b3bcc0000018adc5ddb6990` |

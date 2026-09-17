@@ -73,3 +73,21 @@ does not replace it.
 | `test-map-vary-r-3.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-vary-r-3.t) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-vary-r-3.t) | `294dbf3fe352e7a8c6ffda508832049ec1512841aad4dcd584d229ffb377e464` |
 | `test-map-vary-r-4.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-vary-r-4.t) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-vary-r-4.t) | `27d83afe8c9927849c9b7aa655620fea3658a97f392a9f4d8b7306c444095e24` |
 | `test-map-vary-r.crushmap` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-vary-r.crushmap) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-vary-r.crushmap) | `3c8979266fd148244ddd3dd05455f460c2fa411c5d40f4d7d788227716ae2b57` |
+
+## Choose arguments
+
+`choose-args/choose-args.crush` is an unmodified upstream CLI input; its
+Quincy and Tentacle transcripts are separate because Tentacle prints MSR
+tunables. `hosts.txt` is a source-shaped Rust adaptation of
+`check-invalid-map.t::cmd-01`, retained only to assert decoder rejection.
+`choose-args-compat.crush` is a documented text reconstruction of
+`CrushWrapperTest.choose_args_compat`: the compiler accepts the default
+signed index as its u64 wire spelling `18446744073709551615` and requires
+forward bucket references to be ordered after their definitions. It is not an
+upstream fixture.
+
+| File | Source | SHA256 |
+| --- | --- | --- |
+| `choose-args/choose-args.crush` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/choose-args.crush) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/choose-args.crush) | `fb2a66da99bbaa4e79a260ef6bb1432a55a0ed6475d1ca00594dcc83fd7dc8e5` |
+| `choose-args/choose-args-quincy.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/choose-args.t) | `0d99826efd55c7f82546d9cba11ef666b69fb12afb09f6bf1ea9229e79158939` |
+| `choose-args/choose-args-tentacle.t` | [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/choose-args.t) | `55673262931785674d1d047088ccf02dfa06ac87023948036e56e75408219cc9` |

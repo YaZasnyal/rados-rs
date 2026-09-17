@@ -7,7 +7,7 @@
 //! [`CrushMap`](crate::crush::types::CrushMap).
 
 use crate::crush::error::Result;
-use crate::crush::mapper::crush_do_rule;
+use crate::crush::mapper::crush_do_rule_with_choose_args;
 use crate::crush::types::CrushMap;
 use crate::denc::{Denc, FixedSize, RadosError, VersionedEncode};
 use bytes::{Buf, BufMut};
@@ -332,7 +332,15 @@ pub fn pg_to_osds(
 ) -> Result<Vec<i32>> {
     let x = pg_to_pps(pg, pgp_num, hashpspool);
     let mut result = Vec::new();
-    crush_do_rule(crush_map, rule_id, x, &mut result, result_max, osd_weights)?;
+    crush_do_rule_with_choose_args(
+        crush_map,
+        rule_id,
+        x,
+        &mut result,
+        result_max,
+        osd_weights,
+        pg.pool as i64,
+    )?;
     Ok(result)
 }
 

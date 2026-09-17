@@ -110,6 +110,16 @@ pub struct CrushBucket {
     pub data: BucketData,
 }
 
+/// Per-bucket alternative STRAW2 inputs selected by a pool or default index.
+///
+/// IDs affect only the STRAW2 hash; selected values always come from the
+/// bucket's canonical `items` array.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CrushChooseArg {
+    pub weight_set: Vec<Vec<u32>>,
+    pub ids: Vec<i32>,
+}
+
 /// Main CRUSH map structure
 #[derive(Debug, Clone)]
 pub struct CrushMap {
@@ -139,6 +149,8 @@ pub struct CrushMap {
     pub class_rname: HashMap<String, i32>,
     /// `bucket[id][class_id] = shadow_bucket_id` for device-class tree shadows
     pub class_bucket: HashMap<i32, HashMap<i32, i32>>,
+    /// `choose_args[index][bucket_index]`, including empty sets.
+    pub choose_args: HashMap<i64, Vec<Option<CrushChooseArg>>>,
 }
 
 impl CrushMap {
@@ -166,6 +178,7 @@ impl CrushMap {
             class_name: HashMap::new(),
             class_rname: HashMap::new(),
             class_bucket: HashMap::new(),
+            choose_args: HashMap::new(),
         }
     }
 
