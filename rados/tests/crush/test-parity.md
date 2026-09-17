@@ -2,7 +2,7 @@
 
 The CRUSH client decoder and mapper are checked against Ceph Quincy v17.2.7
 (`b12291d110049b2f35e32e0de30d70e9a4c060d2`) and Tentacle v20.2.4
-(`7f793731f1b39eb4f465e960113d2363c311b964`). The offline suite has **100
+(`7f793731f1b39eb4f465e960113d2363c311b964`). The offline suite has **101
 passing tests** and uses checked-in maps and C-derived vectors, so it needs no
 Ceph checkout, container, or cluster.
 
