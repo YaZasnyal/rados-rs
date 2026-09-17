@@ -23,7 +23,7 @@ differs; otherwise verify and reuse the existing one.
 
 ## Ported tests
 
-**98 tests pass, none ignored.** These establish the scenarios below, not
+**100 tests pass, none ignored.** These establish the scenarios below, not
 complete CRUSH or end-to-end client compatibility.
 
 | Family | Ceph coverage retained | Rust tests | Status |

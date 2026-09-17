@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use rados::crush::{BucketAlgorithm, BucketData, CrushMap, mapper::crush_do_rule};
+use std::collections::HashMap;
 
 const W: u32 = 65536;
 const VECTORS: &str = include_str!("reference/weight-topology-vectors.txt");
@@ -60,20 +61,93 @@ fn mappings(map: &CrushMap, replicas: usize, rows: usize) -> Vec<Vec<i32>> {
         .collect()
 }
 
-fn expected_mappings(case: &str, release: &str) -> Vec<Vec<i32>> {
-    VECTORS
+fn expected_rows(case: &str) -> usize {
+    match case {
+        "crushdiff-before" | "crushdiff-after" => 1000,
+        "adjust-before"
+        | "adjust-item-after"
+        | "adjust-subtree-after"
+        | "multitype-after"
+        | "multitree-after"
+        | "added-straw" => 128,
+        _ => panic!("unknown weight/topology case {case}"),
+    }
+}
+
+fn parse_manifest(input: &str) -> HashMap<(&str, &str), Vec<Vec<i32>>> {
+    let mut mappings = HashMap::new();
+    let mut movements = HashMap::new();
+    for line in input
         .lines()
-        .filter_map(|line| {
-            let fields: Vec<_> = line.split('|').collect();
-            (fields.len() == 4 && fields[0] == release && fields[1] == case).then(|| {
-                fields[3]
-                    .split(',')
-                    .filter(|item| !item.is_empty())
-                    .map(|item| item.parse().unwrap())
-                    .collect()
-            })
-        })
-        .collect()
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    {
+        let fields: Vec<_> = line.split('|').collect();
+        if fields.first() == Some(&"movement") {
+            assert_eq!(fields.len(), 4, "malformed movement: {line}");
+            assert!(
+                matches!(fields[1], "quincy" | "tentacle"),
+                "unknown movement: {line}"
+            );
+            assert_eq!(fields[2], "crushdiff", "unknown movement: {line}");
+            let moved = fields[3].parse().expect("invalid movement count");
+            assert_eq!(
+                movements.insert(fields[1], moved),
+                None,
+                "duplicate movement: {line}"
+            );
+            continue;
+        }
+        assert_eq!(fields.len(), 4, "malformed mapping: {line}");
+        assert!(
+            matches!(fields[0], "quincy" | "tentacle"),
+            "unknown mapping: {line}"
+        );
+        let expected = expected_rows(fields[1]);
+        let x = fields[2].parse::<usize>().expect("invalid mapping x");
+        let rows = mappings
+            .entry((fields[0], fields[1]))
+            .or_insert_with(Vec::new);
+        assert_eq!(x, rows.len(), "non-sequential mapping x: {line}");
+        assert!(rows.len() < expected, "too many mapping rows: {line}");
+        rows.push(
+            fields[3]
+                .split(',')
+                .filter(|item| !item.is_empty())
+                .map(|item| item.parse().expect("invalid mapping item"))
+                .collect(),
+        );
+    }
+    for release in ["quincy", "tentacle"] {
+        for case in [
+            "adjust-before",
+            "adjust-item-after",
+            "adjust-subtree-after",
+            "multitype-after",
+            "multitree-after",
+            "crushdiff-before",
+            "crushdiff-after",
+            "added-straw",
+        ] {
+            assert_eq!(
+                mappings.get(&(release, case)).map(Vec::len),
+                Some(expected_rows(case)),
+                "missing mapping rows: {release} {case}"
+            );
+        }
+        assert_eq!(
+            movements.get(release),
+            Some(&384),
+            "missing movement: {release}"
+        );
+    }
+    assert_eq!(movements.len(), 2, "unexpected movement records");
+    mappings
+}
+
+fn expected_mappings(case: &str, release: &str) -> Vec<Vec<i32>> {
+    parse_manifest(VECTORS)
+        .remove(&(release, case))
+        .unwrap_or_else(|| panic!("missing mapping rows: {release} {case}"))
 }
 
 fn assert_map_vectors(case: &str, replicas: usize) {
@@ -88,6 +162,35 @@ fn assert_map_vectors(case: &str, replicas: usize) {
     }
 }
 
+#[test]
+fn weight_topology_manifest_is_complete_and_ordered() {
+    parse_manifest(VECTORS);
+}
+
+#[test]
+fn weight_topology_manifest_rejects_incomplete_or_invalid_rows() {
+    let missing = VECTORS.replace("tentacle|crushdiff-after|999|3,4,1\n", "");
+    let missing_case = VECTORS
+        .lines()
+        .filter(|line| !line.starts_with("quincy|added-straw|"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let malformed = format!("{VECTORS}quincy|adjust-before|0\n");
+    let unknown = format!("{VECTORS}quincy|unknown|0|0\n");
+    let duplicate = format!("{VECTORS}quincy|adjust-before|0|0\n");
+    let unordered = VECTORS.replacen("quincy|adjust-before|1|0", "quincy|adjust-before|8|0", 1);
+    for manifest in [
+        &missing,
+        &missing_case,
+        &malformed,
+        &unknown,
+        &duplicate,
+        &unordered,
+    ] {
+        assert!(std::panic::catch_unwind(|| parse_manifest(manifest)).is_err());
+    }
+}
+
 // Upstream: v17.2.7/src/test/crush/CrushWrapper.cc::CrushWrapperTest.adjust_item_weight
 // Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/CrushWrapper.cc#L439
 // Upstream: v20.2.4/src/test/crush/CrushWrapper.cc::CrushWrapperTest.adjust_item_weight
@@ -99,11 +202,16 @@ fn adjust_item_weight_retains_all_and_single_shared_leaf_locations() {
         assert_eq!(weights(&before, -2), &[W, W]);
         assert_eq!(weights(&before, -3), &[W, W]);
         assert_eq!(weights(&before, -1), &[2 * W, 2 * W]);
+        assert_eq!(before.get_bucket(-2).unwrap().weight, 2 * W);
+        assert_eq!(before.get_bucket(-3).unwrap().weight, 2 * W);
+        assert_eq!(before.get_bucket(-1).unwrap().weight, 4 * W);
 
         let after = decode(release, "adjust-item-after");
         assert_eq!(weights(&after, -2), &[2 * W, W]);
         assert_eq!(weights(&after, -3), &[2 * W, 2 * W]);
         assert_eq!(weights(&after, -1), &[3 * W, 4 * W]);
+        assert_eq!(after.get_bucket(-2).unwrap().weight, 3 * W);
+        assert_eq!(after.get_bucket(-3).unwrap().weight, 4 * W);
         assert_eq!(after.get_bucket(-1).unwrap().weight, 7 * W);
     }
     assert_map_vectors("adjust-before", 1);
