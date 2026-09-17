@@ -166,3 +166,75 @@ six rules, three weight profiles and both replica counts. Known ignored local
 retry overrides and nonpositive `SetChooseTries` semantics remain separate
 mapper regressions to add. Quincy-specific unit cases and STRAW/STRAW2 weight
 scenarios, point 4 interfaces and point 5 OSDMap/live gates remain open.
+
+## Compiled CLI ports after 240e078 — 2026-09-17
+
+Continued point 3 using the pinned ARM64 crushtool containers documented in
+`reference/README.md`. Imported four unchanged upstream files: set-choose text
+map/transcript and test-map-firstn-indep text map/transcript. Both pinned
+commits contain byte-identical inputs; no test fixture was invented or edited.
+
+### Source review and reference preparation
+
+Read the complete maps, all command blocks, rule definitions, weight profiles,
+seed/replica ranges and result-size histograms. The firstn/indep map's duplicate
+`rack1` entry is intentional input and was retained. `git show`/`git diff` at
+both pinned commits confirmed identities. `git grep -l -E
+'set_choose_local_tries|set_choose_local_fallback_tries|bad-mappings|test-map-firstn-indep'`
+searched `src/test/crush`, `src/test/cli/crushtool` and `qa/standalone/crush`
+for both releases; selected cases agree with the archived upstream inventory.
+Read both mappers' rule override handling and FIRSTN retries, and both
+`CrushTester.cc` bad-mapping predicates (short vector or any NONE slot).
+
+`reference/prepare-cli.py ../ceph` verifies all six text inputs/transcripts
+against the pinned Git contents and confirms each image's source commit and
+matching ceph-base/ceph-common package version. It streams each original map
+through `crushtool -c /dev/stdin -o /dev/stdout`, then replays every original
+test command with the generated binary on stdin. All seven complete outputs
+match for each release, including Cram-escaped histogram tabs and advisories.
+Only input/output transport changes; no mapper or expected output is adapted.
+
+Six generated binary maps are stored in `reference/`, separately from original
+`fixtures/`, with SHA256 and reproduction commands. Each Tentacle map equals
+the Quincy bytes plus two u32 MSR defaults 100/100; Rust decodes both variants
+and checks there are no unconsumed bytes. Ordinary Cargo tests remain offline.
+
+### Rust ports and results
+
+- `golden::bad_mappings_compiled`: original rules 0/1, seed 1, ten replicas,
+  exact vectors including the five INDEP NONE slots; closes binary decode
+  coverage for the earlier direct-assembly port. The existing functional test
+  remains a second setup for the same two cases, not additional upstream cases.
+- `golden::firstn_indep_compiled`: rules 0/1, seed 1, replicas 1..10; checks
+  the complete bad-mapping report, including ten exact vectors and absence of
+  errors for the ten successful calls. No exact success vectors are invented.
+- `golden::set_choose_all_in`, `set_choose_out_devices`,
+  `set_choose_partial_weights`: all 36,864 vectors, all six rules, both replica
+  counts, all original weights and statistics. OSD 6's 0.1 weight is truncated
+  to 6553 as in crushtool. Extended the existing golden helper to handle rule
+  ranges and explicit weights while retaining complete sequence/count/histogram
+  validation before invoking the mapper.
+
+All five new tests passed on their first execution, with no production change.
+Passing set-choose does not resolve the known ignored local retry opcodes:
+its fallback override equals the map's value 2, and its local retry value 2
+is already covered by that fallback budget. Separate discriminating local
+regressions and nonpositive SetChooseTries cases remain necessary.
+
+Validation (macOS ARM64, pinned Linux ARM64 containers):
+
+- `python3 rados/tests/crush/reference/prepare-cli.py ../ceph`: all seven
+  command outputs match both releases; six compiled maps written.
+- `cargo test -p rados --test crush golden:: --offline`: 17 passed initially.
+- `cargo test -p rados --test crush --offline`: 59 passed, none ignored.
+- `cargo fmt --all -- --check`, `git diff --check`, local documentation link
+  checks and documented fixture/map SHA256 checks: passed.
+- Full workspace/all-target/all-feature Clippy remains blocked by the two
+  pre-existing `OSD_STAT_INTERFACES_*` unused constants in pgmap_types.rs.
+  `cargo clippy -p rados --lib --test crush --offline -- -D warnings -A dead-code`
+  passed. No lint configuration changed.
+
+Next in point 3: discriminatory retry regressions, Quincy-specific unit cases,
+STRAW zero/perturbed weights and STRAW2 reweight. Choose arguments, device-class
+queries, retry counters, full OSDMap placement and live-cluster gates remain
+open; these CLI ports do not establish complete CRUSH compatibility.

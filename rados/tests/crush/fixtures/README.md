@@ -1,6 +1,6 @@
 # Ceph CRUSH golden fixtures
 
-All `.crushmap`, `.crushmap.txt` and `.t` files here are unmodified copies of
+All maps and `.t` transcripts here are unmodified copies of
 `src/test/cli/crushtool/` from both pinned releases:
 
 - v17.2.7: `b12291d110049b2f35e32e0de30d70e9a4c060d2`
@@ -8,8 +8,10 @@ All `.crushmap`, `.crushmap.txt` and `.t` files here are unmodified copies of
 
 Every imported file was compared byte for byte across these commits. One
 copy serves both releases. The twelve original golden transcripts contain
-87,040 distinct expected mappings, not 174,080 independent cases;
-`bad-mappings.t` adds two ordered vectors. Expected results come from the committed Ceph
+87,040 distinct expected mappings, not 174,080 independent cases.
+`set-choose.t` adds 36,864 mappings, `bad-mappings.t` two ordered vectors,
+and `test-map-firstn-indep.t` ten bad vectors across twenty mapping calls.
+Expected results come from the committed Ceph
 transcripts, never from the Rust implementation. No external tools or local
 paths are needed to run `cargo test -p rados --test crush --offline`.
 Locally generated regression data and their provenance live in
@@ -27,17 +29,18 @@ so an early mapper failure cannot hide incomplete fixture data. See the
 [execution history](../../../../.notes/crush/test-parity-history.md#stage-2-mapper-fixes) for the original
 failures, mapper corrections and passing results.
 
-`bad-mappings.crushmap.txt` is preserved unchanged as the setup reference for
-`functional::bad_mappings`; its single STRAW bucket and two rules are assembled
-directly in Rust. `bad-mappings.t` supplies both literal expected vectors.
-The [C reference runner](../reference/README.md) independently checks the setup
-and both outputs against each release. No binary fixture has been generated
-for this map, so its compiler/decoder path is not covered by this port.
+The original text maps `bad-mappings.crushmap.txt`, `set-choose.crushmap.txt`
+and `test-map-firstn-indep.txt` are also compiled by each pinned crushtool.
+Those generated binaries and their reproduction instructions live separately
+in [reference](../reference/README.md#compiled-cli-maps). Rust decodes both
+release variants and checks the original transcripts. The earlier
+`functional::bad_mappings` direct-assembly test remains supplementary coverage
+of the same two cases, not two additional upstream scenarios.
 
 Provenance: paths in the table are relative to `src/test/cli/crushtool/`;
 links point to the exact releases above. Adaptations to fixture bytes: none.
-`cmd-01` in test source comments is a locally assigned identifier for the
-single unnamed CLI command in each transcript.
+`cmd-NN` in test source comments is a locally assigned identifier for the
+corresponding unnamed command in each transcript.
 
 Ceph's upstream copyright/license notices are preserved in `COPYING`,
 `COPYING-LGPL2.1` and `COPYING-LGPL3`, copied from v17.2.7. These third-party
@@ -46,6 +49,10 @@ does not replace it.
 
 | File | Source v17.2.7 / v20.2.4 | SHA256 |
 | --- | --- | --- |
+| `set-choose.crushmap.txt` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/set-choose.crushmap.txt) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/set-choose.crushmap.txt) | `6c29846b7d52c0f575cbdf73d0d98e86b151fe860740a4555e77aacf638b69cc` |
+| `set-choose.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/set-choose.t) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/set-choose.t) | `612b54d0a0b2c0526698aa7b8d275dc6beedc58f1706e605df5cab3ea26ee8ae` |
+| `test-map-firstn-indep.txt` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-firstn-indep.txt) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-firstn-indep.txt) | `44f9f719d65e8f70056482e4b3ee2df93fd08207bab2b75e8c2e39bba02d06b6` |
+| `test-map-firstn-indep.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-firstn-indep.t) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-firstn-indep.t) | `15890b6666025c1735adb6add9c8263dfe9a20ccb436f74e7c7abd5dc8b58970` |
 | `bad-mappings.crushmap.txt` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/bad-mappings.crushmap.txt) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/bad-mappings.crushmap.txt) | `7769a2304e7a81b864deb9e10eb550b882e12cb3093467f6c612f3a949bcbeeb` |
 | `bad-mappings.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/bad-mappings.t) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/bad-mappings.t) | `1abb4d051849b501d5ab2ade6e869fc1e56105ac1e21a9b4421ec9bae463cfa4` |
 | `test-map-a.crushmap` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-a.crushmap) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-a.crushmap) | `3eacd04c60fa0143e298c49f6609a5b405fc01fc668f80386da28a8ea40781ca` |
