@@ -152,7 +152,7 @@ fn osdmaptool_test_map_pgs_replays_all_source_pgs() {
 }
 
 // Upstream: v17.2.7/v20.2.4 src/test/cli/osdmaptool/crush.t::create_export_import;
-// src/test/cli/osdmaptool/create-print.t::create_from_conf (locally assigned decode subsets).
+// src/test/cli/osdmaptool/create-print.t::createsimple_3 (locally assigned decode subsets).
 // Sources: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/osdmaptool/crush.t
 // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/osdmaptool/crush.t
 // https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/osdmaptool/create-print.t
@@ -166,9 +166,10 @@ fn osdmaptool_crush_and_create_print_maps_decode() {
         assert!(crush.get_crush_map().is_some(), "{release}");
 
         let create_print = decode(create_print);
-        assert_eq!(create_print.max_osd, 239, "{release}");
+        assert_eq!(create_print.max_osd, 3, "{release}");
         assert_eq!(create_print.pools[&1].size, 3, "{release}");
-        assert_eq!(create_print.pools[&1].pg_num, 15_296, "{release}");
+        assert_eq!(create_print.pools[&1].pg_num, 192, "{release}");
+        assert_eq!(create_print.pools[&1].pgp_num, 192, "{release}");
         assert!(create_print.get_crush_map().is_some(), "{release}");
     }
 }

@@ -46,7 +46,7 @@ def capture(container, directory):
 set -e
 osdmaptool --create-from-conf /work/create-racks.osdmap -c /work/ceph.conf.withracks --with-default-pool >/dev/null
 osdmaptool --test-map-pg 0.0 /work/create-racks.osdmap >/work/create-racks-pg0.txt
-osdmaptool --clobber --create-from-conf --with-default-pool /work/create-print.osdmap -c /work/ceph.conf.withracks >/dev/null
+osdmaptool --createsimple 3 /work/create-print.osdmap --with-default-pool >/dev/null
 osdmaptool --createsimple 3 /work/crush.osdmap --with-default-pool >/dev/null
 osdmaptool --export-crush /work/crush.bin /work/crush.osdmap >/dev/null
 osdmaptool --import-crush /work/crush.bin /work/crush.osdmap >/dev/null
@@ -66,18 +66,21 @@ def fixture_hashes():
         path.name: hashlib.sha256(path.read_bytes()).hexdigest()
         for path in (
             sorted(root.glob("*.osdmap"))
-            + sorted(root.glob("*-results.txt"))
+            + sorted(root.glob("*.txt"))
             + [root / "ceph.conf.withracks"]
         )
     }
 
 
-def validate_output(directory):
+def validate_output(directory, release):
     pg0 = (directory / "create-racks-pg0.txt").read_text()
     assert "0.0 raw ([], p-1) up ([], p-1) acting ([], p-1)" in pg0, pg0
     workload = (directory / "test-map-pgs-results.txt").read_text()
     assert "pool 1 pg_num 8000" in workload, workload
     assert re.search(r"size 3\s+8000", workload), workload
+    if check:
+        expected = (root / f"test-map-pgs-results-{release}.txt").read_text()
+        assert workload == expected, f"{release} test-map-pgs result differs from fixture"
 
 
 inputs = {release: {path: source(revision, path) for path in paths}
@@ -91,7 +94,7 @@ for release, version, revision, digest in releases:
         temporary = Path(temporary)
         (temporary / "ceph.conf.withracks").write_bytes(inputs[release][paths[0]])
         capture(image(digest), temporary)
-        validate_output(temporary)
+        validate_output(temporary, release)
         if not check:
             for name in (
                 "create-racks.osdmap", "create-print.osdmap", "crush.osdmap",
