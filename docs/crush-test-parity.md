@@ -1,15 +1,17 @@
 # CRUSH test parity inventory
 
 Inventory date: 2026-09-17. Rust baseline: `9388052` on `main`, before the
-documentation-only `docs/crush-test-parity` branch. Policy:
+`docs/crush-test-parity` branch (documentation first, then Stage 1 tests). Policy:
 [Testing requirements](../.claude/TESTING.md).
 
-**No upstream CRUSH test has been verified as a complete Rust port.** The
-current CRUSH unit suite passes 26 tests and ignores one, but its assertions
-do not establish Ceph placement parity. This document inventories tests and
-prerequisites; it does not add tests, fixtures, or implementation changes.
+**Stage 1 now has 12 runnable golden integration scenarios** in
+[rados/tests/crush/golden.rs](../rados/tests/crush/golden.rs), containing
+87,040 expected mappings shared by both pinned releases. The first run
+against the unchanged mapper failed all 12 scenarios; compatibility is not
+yet verified. The original CRUSH unit suite passes 26 tests and ignores one.
+See [Stage 1 execution](#stage-1-execution) for evidence and adaptations.
 
-Navigation: [Current Rust coverage](#current-rust-coverage) ·
+Navigation: [Stage 1 execution](#stage-1-execution) · [Current Rust coverage](#current-rust-coverage) ·
 [Prerequisites](#prerequisites-and-disposition-reasons) ·
 [Mapper](#mapper-unit-tests) · [Wrapper](#crushwrapper-unit-tests) ·
 [CLI](#crushtool-cases) · [Fixtures](#fixture-and-helper-catalogue) ·
@@ -79,6 +81,67 @@ Each Ready-now unit total includes one `straw2_stddev` diagnostic without a dist
 | Adjacent OSDMap definitions | 18 | 30 | Listed individually; BUG_51842 has four variants per release. |
 
 For CLI readiness, 12 complete mapping files are Ready now; invalid-map decoding is an additional ready **subset**. Other files carry explicit F/A/L/D prerequisites or E exclusions below. These heterogeneous totals are intentionally not added into one percentage.
+
+## Stage 1 execution
+
+Entry point: [rados/tests/crush.rs](../rados/tests/crush.rs), with golden tests
+in [crush/golden.rs](../rados/tests/crush/golden.rs). Run without Ceph tools,
+a Ceph checkout, environment variables or a cluster:
+
+```sh
+cargo test -p rados --test crush --offline
+```
+
+The 18 original inputs (6 binary maps and 12 Cram transcripts) are checked in
+with [provenance, SHA256 and licenses](../rados/tests/crush/fixtures/README.md).
+Each file is byte-identical across the pinned releases. Tests preserve all
+87,040 ordered vectors, requested replica counts, seeds 0..1023, command
+weight/tunable overrides and result-size histograms. The helper validates every transcript
+record and its histogram before calling the mapper. Each scenario stops at
+its first mapping mismatch, reporting source line, rule, seed and requested replicas.
+Passing means every mapping and histogram was checked; a failed scenario
+must not be counted as having verified its later vectors.
+
+Coverage of each complete Cram scenario is **Partial**: all client
+mapping/statistics assertions are ported in the 12 entries below. CLI output
+formatting and the map-modified advisory are excluded because this crate has no crushtool CLI. Original text remains
+in the fixtures for review; revisit if a compatible CLI is implemented.
+There are no ignored tests or substituted expectations. Review: Pending.
+No generated oracle, upstream executable or live-cluster check was run.
+
+By explicit scope decision, Stage 1 changes only tests, fixtures and this
+inventory. Mapper fixes are a separate stage. The 12 tests remain active and
+make `cargo test -p rados --test crush` (and unfiltered test runs) fail until
+the implementation is corrected; this is an intentional failing baseline.
+
+Initial and final functional runs on `8dbcbb8` plus the new tests (macOS,
+default features, no Ceph runtime dependencies):
+**0 passed, 12 failed, 0 ignored**. All six maps decoded successfully and
+consumed their input. First differences (`expected -> actual`):
+
+| Rust scenario | Rule / seed / replicas | First mismatch |
+| --- | --- | --- |
+| `bobtail_tunables`, `legacy_tunables` | 0 / 788 / 1 | `[226] -> [472]` |
+| `indep` | 1 / 788 / 1 | `[226] -> [472]` |
+| `firefly_tunables`, `hammer_tunables`, `jewel_tunables` | 0 / 155 / 1 | `[75] -> [114]` |
+| `tries_vs_retries` | 0 / 0 / 1 | `[7] -> []` |
+| `vary_r_0` | 3 / 0 / 2 | `[94,85] -> [94]` |
+| `vary_r_1` | 3 / 0 / 2 | `[94,6] -> [94,114]` |
+| `vary_r_2` | 3 / 0 / 2 | `[94,45] -> [94,114]` |
+| `vary_r_3`, `vary_r_4` | 3 / 0 / 2 | `[94,85] -> [94,114]` |
+
+Additional validation on the final Stage 1 tree:
+
+- `cargo test -p rados --lib crush:: --offline`: 26 passed, 1 ignored.
+- `cargo fmt --all -- --check`: passed.
+- `cargo clippy -p rados --test crush --offline -- -D warnings`: blocked by
+  existing unused `OSD_STAT_INTERFACES_NUM_FIELDS` and
+  `OSD_STAT_INTERFACES_SIZE` in `rados/src/osdclient/pgmap_types.rs`.
+- `cargo clippy -p rados --test crush --offline -- -D warnings -A dead-code`:
+  passed; this allows only that pre-existing lint category for this check.
+- All 18 fixture files compared byte for byte against both pinned Git
+  commits; SHA256 values, 87,040 mapping records, source references, local
+  document links and upstream license copies verified.
 
 ## Current Rust coverage
 
@@ -614,6 +677,8 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-bobtail-tunables.t
 
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::bobtail_tunables](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+
 **Readiness:** Ready now. Existing binary input and exact .t vectors/statistics; x=0..1023, replicas 1..10. Preserve the command-specific rule, weight overrides and tunables listed below; no Ceph build required for replay. Historical tunable names do not make these tests out of scope for Quincy.
 
 | Local case / original command | Source blocks |
@@ -621,6 +686,8 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 | `cmd-01`: ``crushtool -i "$TESTDIR/test-map-a.crushmap" --test --show-mappings --show-statistics --rule 0 --set-choose-local-tries 0 --set-choose-local-fallback-tries 0 --set-choose-total-tries 50 --set-chooseleaf-descend-once 1 --min-rep 1 --max-rep 10`` | [v17.2.7](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-bobtail-tunables.t#L1 "v17.2.7/src/test/cli/crushtool/test-map-bobtail-tunables.t::cmd-01") / [v20.2.4](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-bobtail-tunables.t#L1 "v20.2.4/src/test/cli/crushtool/test-map-bobtail-tunables.t::cmd-01") |
 
 ### test-map-firefly-tunables.t
+
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::firefly_tunables](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
 
 **Readiness:** Ready now. Existing binary input and exact .t vectors/statistics; x=0..1023, replicas 1..10. Preserve the command-specific rule, weight overrides and tunables listed below; no Ceph build required for replay. Historical tunable names do not make these tests out of scope for Quincy.
 
@@ -641,6 +708,8 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-hammer-tunables.t
 
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::hammer_tunables](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+
 **Readiness:** Ready now. Existing binary input and exact .t vectors/statistics; x=0..1023, replicas 1..10. Preserve the command-specific rule, weight overrides and tunables listed below; no Ceph build required for replay. Historical tunable names do not make these tests out of scope for Quincy.
 
 | Local case / original command | Source blocks |
@@ -648,6 +717,8 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 | `cmd-01`: ``crushtool -i "$TESTDIR/test-map-hammer-tunables.crushmap" --test --show-mappings --show-statistics --rule 0 --weight 12 0 --weight 20 0 --weight 30 0 --min-rep 1 --max-rep 10`` | [v17.2.7](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-hammer-tunables.t#L1 "v17.2.7/src/test/cli/crushtool/test-map-hammer-tunables.t::cmd-01") / [v20.2.4](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-hammer-tunables.t#L1 "v20.2.4/src/test/cli/crushtool/test-map-hammer-tunables.t::cmd-01") |
 
 ### test-map-indep.t
+
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::indep](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
 
 **Readiness:** Ready now. Existing binary input and exact .t vectors/statistics; x=0..1023, replicas 1..10. Preserve the command-specific rule, weight overrides and tunables listed below; no Ceph build required for replay. Historical tunable names do not make these tests out of scope for Quincy.
 
@@ -657,6 +728,8 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-jewel-tunables.t
 
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::jewel_tunables](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+
 **Readiness:** Ready now. Existing binary input and exact .t vectors/statistics; x=0..1023, replicas 1..10. Preserve the command-specific rule, weight overrides and tunables listed below; no Ceph build required for replay. Historical tunable names do not make these tests out of scope for Quincy.
 
 | Local case / original command | Source blocks |
@@ -664,6 +737,8 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 | `cmd-01`: ``crushtool -i "$TESTDIR/test-map-jewel-tunables.crushmap" --test --show-mappings --show-statistics --rule 0 --weight 12 0 --weight 20 0 --weight 30 0 --min-rep 1 --max-rep 10`` | [v17.2.7](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-jewel-tunables.t#L1 "v17.2.7/src/test/cli/crushtool/test-map-jewel-tunables.t::cmd-01") / [v20.2.4](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-jewel-tunables.t#L1 "v20.2.4/src/test/cli/crushtool/test-map-jewel-tunables.t::cmd-01") |
 
 ### test-map-legacy-tunables.t
+
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::legacy_tunables](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
 
 **Readiness:** Ready now. Existing binary input and exact .t vectors/statistics; x=0..1023, replicas 1..10. Preserve the command-specific rule, weight overrides and tunables listed below; no Ceph build required for replay. Historical tunable names do not make these tests out of scope for Quincy.
 
@@ -673,6 +748,8 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-tries-vs-retries.t
 
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::tries_vs_retries](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+
 **Readiness:** Ready now. Existing binary input and exact .t vectors/statistics; x=0..1023, replicas 1..10. Preserve the command-specific rule, weight overrides and tunables listed below; no Ceph build required for replay. Historical tunable names do not make these tests out of scope for Quincy.
 
 | Local case / original command | Source blocks |
@@ -680,6 +757,8 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 | `cmd-01`: ``crushtool -i "$TESTDIR/test-map-tries-vs-retries.crushmap" --test --show-mappings --show-statistics --weight 0 0 --weight 8 0 --min-rep 1 --max-rep 10`` | [v17.2.7](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-tries-vs-retries.t#L1 "v17.2.7/src/test/cli/crushtool/test-map-tries-vs-retries.t::cmd-01") / [v20.2.4](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-tries-vs-retries.t#L1 "v20.2.4/src/test/cli/crushtool/test-map-tries-vs-retries.t::cmd-01") |
 
 ### test-map-vary-r-0.t
+
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::vary_r_0](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
 
 **Readiness:** Ready now. Existing test-map-vary-r.crushmap; rule 3, vary_r=0, OSDs 0/4/9 out, x=0..1023, replicas 2/3/4. Compare all 3072 ordered vectors and result-size counts, including undersized results.
 
@@ -689,6 +768,8 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-vary-r-1.t
 
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::vary_r_1](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+
 **Readiness:** Ready now. Existing test-map-vary-r.crushmap; rule 3, vary_r=1, OSDs 0/4/9 out, x=0..1023, replicas 2/3/4. Compare all 3072 ordered vectors and result-size counts, including undersized results.
 
 | Local case / original command | Source blocks |
@@ -696,6 +777,8 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 | `cmd-01`: ``crushtool -i "$TESTDIR/test-map-vary-r.crushmap" --test --show-mappings --show-statistics --rule 3 --set-chooseleaf-vary-r 1 --weight 0 0 --weight 4 0 --weight 9 0 --min-rep 2 --max-rep 4`` | [v17.2.7](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-vary-r-1.t#L1 "v17.2.7/src/test/cli/crushtool/test-map-vary-r-1.t::cmd-01") / [v20.2.4](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-vary-r-1.t#L1 "v20.2.4/src/test/cli/crushtool/test-map-vary-r-1.t::cmd-01") |
 
 ### test-map-vary-r-2.t
+
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::vary_r_2](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
 
 **Readiness:** Ready now. Existing test-map-vary-r.crushmap; rule 3, vary_r=2, OSDs 0/4/9 out, x=0..1023, replicas 2/3/4. Compare all 3072 ordered vectors and result-size counts, including undersized results.
 
@@ -705,6 +788,8 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-vary-r-3.t
 
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::vary_r_3](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+
 **Readiness:** Ready now. Existing test-map-vary-r.crushmap; rule 3, vary_r=3, OSDs 0/4/9 out, x=0..1023, replicas 2/3/4. Compare all 3072 ordered vectors and result-size counts, including undersized results.
 
 | Local case / original command | Source blocks |
@@ -712,6 +797,8 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 | `cmd-01`: ``crushtool -i "$TESTDIR/test-map-vary-r.crushmap" --test --show-mappings --show-statistics --rule 3 --set-chooseleaf-vary-r 3 --weight 0 0 --weight 4 0 --weight 9 0 --min-rep 2 --max-rep 4`` | [v17.2.7](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-vary-r-3.t#L1 "v17.2.7/src/test/cli/crushtool/test-map-vary-r-3.t::cmd-01") / [v20.2.4](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-vary-r-3.t#L1 "v20.2.4/src/test/cli/crushtool/test-map-vary-r-3.t::cmd-01") |
 
 ### test-map-vary-r-4.t
+
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::vary_r_4](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
 
 **Readiness:** Ready now. Existing test-map-vary-r.crushmap; rule 3, vary_r=4, OSDs 0/4/9 out, x=0..1023, replicas 2/3/4. Compare all 3072 ordered vectors and result-size counts, including undersized results.
 
