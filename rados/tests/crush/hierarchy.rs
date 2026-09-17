@@ -201,6 +201,12 @@ fn location_and_distance_preserve_order_and_multipath_minimum() {
     assert_eq!(map.common_ancestor_distance(3, &multipath).unwrap(), 1);
 }
 
+// Upstream: v17.2.7/src/test/cli/crushtool/location.t::cmd-01/cmd-02
+// Source cmd-01: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/location.t#L1
+// Source cmd-02: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/location.t#L2
+// Upstream: v20.2.4/src/test/cli/crushtool/location.t::cmd-01/cmd-02
+// Source cmd-01: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/location.t#L1
+// Source cmd-02: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/location.t#L2
 // Upstream: v17.2.7/src/test/cli/crushtool/location.t::cmd-03/cmd-04/cmd-05
 // Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/location.t#L3
 // Upstream: v20.2.4/src/test/cli/crushtool/location.t::cmd-03/cmd-04/cmd-05
