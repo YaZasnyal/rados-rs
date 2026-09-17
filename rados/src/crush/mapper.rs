@@ -102,8 +102,10 @@ pub fn crush_do_rule(
     // (it counted 'retries' and not 'tries'). add one."
     let mut choose_tries = map.choose_total_tries + 1;
     let mut choose_leaf_tries = 0;
-    let mut chooseleaf_vary_r = map.chooseleaf_vary_r;
-    let mut chooseleaf_stable = map.chooseleaf_stable;
+    let mut choose_local_tries = map.choose_local_tries;
+    let mut choose_local_fallback_tries = map.choose_local_fallback_tries;
+    let mut chooseleaf_vary_r = u32::from(map.chooseleaf_vary_r);
+    let mut chooseleaf_stable = u32::from(map.chooseleaf_stable);
 
     for step in &rule.steps {
         match step.op {
@@ -143,6 +145,8 @@ pub fn crush_do_rule(
                         weights,
                         choose_tries,
                         recurse_tries,
+                        choose_local_tries,
+                        choose_local_fallback_tries,
                         chooseleaf_vary_r,
                         chooseleaf_stable,
                         recurse_to_leaf.then_some(&mut leaves[..remaining]),
@@ -204,16 +208,29 @@ pub fn crush_do_rule(
                 work.clear();
             }
 
-            RuleOp::SetChooseTries => choose_tries = step.arg1 as u32,
-            RuleOp::SetChooseLeafVaryR => chooseleaf_vary_r = step.arg1 as u8,
-            RuleOp::SetChooseLeafStable => chooseleaf_stable = step.arg1 as u8,
+            RuleOp::SetChooseTries if step.arg1 > 0 => choose_tries = step.arg1 as u32,
             RuleOp::SetChooseLeafTries => {
                 if step.arg1 > 0 {
                     choose_leaf_tries = step.arg1 as u32;
                 }
             }
-            RuleOp::SetChooseLocalTries
+            RuleOp::SetChooseLocalTries if step.arg1 >= 0 => {
+                choose_local_tries = step.arg1 as u32;
+            }
+            RuleOp::SetChooseLocalFallbackTries if step.arg1 >= 0 => {
+                choose_local_fallback_tries = step.arg1 as u32;
+            }
+            RuleOp::SetChooseLeafVaryR if step.arg1 >= 0 => {
+                chooseleaf_vary_r = step.arg1 as u32;
+            }
+            RuleOp::SetChooseLeafStable if step.arg1 >= 0 => {
+                chooseleaf_stable = step.arg1 as u32;
+            }
+            RuleOp::SetChooseTries
+            | RuleOp::SetChooseLocalTries
             | RuleOp::SetChooseLocalFallbackTries
+            | RuleOp::SetChooseLeafVaryR
+            | RuleOp::SetChooseLeafStable
             | RuleOp::SetMsrDescents
             | RuleOp::SetMsrCollisionTries
             | RuleOp::ChooseMsr
@@ -240,8 +257,10 @@ fn crush_choose_firstn(
     weights: &[u32],
     tries: u32,
     recurse_tries: u32,
-    vary_r: u8,
-    stable: u8,
+    local_tries: u32,
+    local_fallback_tries: u32,
+    vary_r: u32,
+    stable: u32,
     mut leaves: Option<&mut [i32]>,
     parent_r: u32,
 ) -> Result<usize> {
@@ -259,8 +278,8 @@ fn crush_choose_firstn(
         capacity = out.len(),
         tries,
         recurse_tries,
-        local_retries = map.choose_local_tries,
-        local_fallback_retries = map.choose_local_fallback_tries,
+        local_retries = local_tries,
+        local_fallback_retries = local_fallback_tries,
         vary_r,
         stable,
         chooseleaf = leaves.is_some(),
@@ -283,9 +302,9 @@ fn crush_choose_firstn(
                 .wrapping_add(total_failures);
             let mut collide = false;
             if current_bucket.size != 0 {
-                let item = if map.choose_local_fallback_tries > 0
+                let item = if local_fallback_tries > 0
                     && local_failures >= current_bucket.size / 2
-                    && local_failures > map.choose_local_fallback_tries
+                    && local_failures > local_fallback_tries
                 {
                     tracing::trace!(
                         rep,
@@ -349,7 +368,7 @@ fn crush_choose_firstn(
                         let sub_r = if vary_r == 0 {
                             0
                         } else {
-                            r.checked_shr(u32::from(vary_r) - 1).unwrap_or(0)
+                            r.checked_shr(vary_r - 1).unwrap_or(0)
                         };
                         tracing::trace!(
                             rep,
@@ -370,6 +389,8 @@ fn crush_choose_firstn(
                             weights,
                             recurse_tries,
                             0,
+                            local_tries,
+                            local_fallback_tries,
                             vary_r,
                             stable,
                             None,
@@ -412,9 +433,9 @@ fn crush_choose_firstn(
 
             total_failures += 1;
             local_failures += 1;
-            if (collide && local_failures <= map.choose_local_tries)
-                || (map.choose_local_fallback_tries > 0
-                    && local_failures <= current_bucket.size + map.choose_local_fallback_tries)
+            if (collide && local_failures <= local_tries)
+                || (local_fallback_tries > 0
+                    && local_failures <= current_bucket.size + local_fallback_tries)
             {
                 // A local retry stays in the bucket where the collision occurred.
                 tracing::trace!(
@@ -1097,7 +1118,7 @@ mod tests {
         let mut out = vec![CRUSH_ITEM_NONE; 2];
         let weights = vec![0x10000, 0x10000, 0x10000];
         let count = crush_choose_firstn(
-            &map, -1, 123, 2, 0, &mut out, 0, &weights, 50, 50, 0, 0, None, 0,
+            &map, -1, 123, 2, 0, &mut out, 0, &weights, 50, 50, 0, 0, 0, 0, None, 0,
         )
         .unwrap();
         out.truncate(count);

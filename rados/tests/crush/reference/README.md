@@ -34,7 +34,8 @@ which asserts the upstream transcript's complete ordered vectors. This checks
 placement and builder setup, not the text compiler or binary decoder.
 
 Cargo tests do not execute these helpers; they embed the generated
-[mapper-regressions.txt](mapper-regressions.txt) and compiled maps stored here. Unmodified
+[mapper-regressions.txt](mapper-regressions.txt),
+[mapper-retries.txt](mapper-retries.txt), and compiled maps stored here. Unmodified
 upstream maps and transcripts live in [fixtures](../fixtures); investigation
 notes live in [.notes/crush](../../../../.notes/crush).
 
@@ -128,6 +129,17 @@ empty and are asserted directly instead of storing another 6,400 empty rows.
 No negative MSR fanout is passed to the C oracle: that input has no safe C
 contract and is covered by Rust validation tests.
 
+[`mapper-retries.txt`](mapper-retries.txt) contains 1,000 rows for local cases
+11..20: all-in inputs except cases 13..16, which mark OSD 0 out to exercise
+recursive leaf retries. Every case retains the C result length and ordered
+devices. Cases 11 and 12 verify that zero and negative values leave the prior
+positive `choose_tries` or `chooseleaf_tries` override unchanged. Cases 13..16
+cover positive and zero local/local-fallback retries with a negative repeat.
+Cases 17..19 cover `vary_r` 2 or 0 and `stable` 0 with a negative repeat.
+The C mapper computes a recursive seed as `r >> (vary_r - 1)` when `vary_r`
+is nonzero; the generated cases use only 0 and 2, avoiding an undefined C
+shift count while exercising both branches.
+
 | Case | Behavior |
 | --- | --- |
 | 0 | Chained INDEP skips unresolved failure domains. |
@@ -139,11 +151,18 @@ contract and is covered by Rust validation tests.
 | 7 / 8 | MSR block missing TAKE / EMIT. |
 | 9 | An invalid second MSR block discards output from the valid first block. |
 | 10 | Device TAKE followed by CHOOSE_MSR is invalid. |
+| 11 / 12 | Positive choose/chooseleaf retries survive zero and negative repeats. |
+| 13 / 14 | Local retries: positive and zero values, each with a negative repeat. |
+| 15 / 16 | Local fallback retries: positive and zero values, each with a negative repeat. |
+| 17 / 18 | Recursive `vary_r`: positive and zero values with a negative repeat. |
+| 19 | Recursive `stable=0` survives a negative repeat. |
+| 20 | Direct FIRSTN ignores zero and negative choose-tries repeats. |
 
 SHA256:
 
-- Generator: `6e93c0fe5c21313a5162f9c36ca87b6198ea8da08ae3dacf2fd0796f61edece9`.
-- Vectors: `526fbf16663e42265899c0405e0213996c8cd14f391c4aeb52cd8273f0c3127c`.
+- Generator: `cd6130979dacc7153c6025c8e54f7c1a1beaafcc6d534469c3f7ce5591cbf96e`.
+- Existing vectors: `526fbf16663e42265899c0405e0213996c8cd14f391c4aeb52cd8273f0c3127c`.
+- Retry vectors: `9cde2e3b1d28361fd6a6549d2195893798085b1deaa3b24c48b37a6d3f34084e`.
 
 Generation environment: macOS, Apple clang 21.0.0 (clang-2100.1.1.101),
 `-std=gnu99 -O2`. The only build adaptation is an empty generated
@@ -183,7 +202,7 @@ with tempfile.TemporaryDirectory() as directory:
         if release == 'quincy':
             command.append('-DQUINCY')
         sp.run(command, check=True)
-        cases = (0, 1, 2, 4) if release == 'quincy' else range(11)
+        cases = (0, 1, 2, 4, *range(11, 21)) if release == 'quincy' else range(21)
         outputs[release] = {case: sp.check_output([str(root / 'run'), str(case)])
                             for case in cases}
     for case, data in outputs['quincy'].items():
@@ -193,4 +212,6 @@ with tempfile.TemporaryDirectory() as directory:
                    for row in outputs['tentacle'][case].splitlines())
     (reference / 'mapper-regressions.txt').write_bytes(
         b''.join(outputs['tentacle'][case] for case in range(7)))
+    (reference / 'mapper-retries.txt').write_bytes(
+        b''.join(outputs['tentacle'][case] for case in range(11, 21)))
 ```

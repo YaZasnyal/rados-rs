@@ -91,6 +91,46 @@ fn check_vectors(scenario: i32, map: &CrushMap, count: usize) {
     }
 }
 
+fn check_retry_vectors(cases: &[(i32, usize, Vec<CrushRuleStep>)]) {
+    let records: Vec<Vec<i32>> = include_str!("reference/mapper-retries.txt")
+        .lines()
+        .map(|line| {
+            line.split_whitespace()
+                .map(|number| number.parse().unwrap())
+                .collect()
+        })
+        .collect();
+    assert_eq!(records.len(), cases.len() * 100);
+
+    let mut actual = vec![99];
+    for (case_index, (scenario, count, steps)) in cases.iter().enumerate() {
+        let mut map = map_with_rule(RuleType::Replicated, steps.clone());
+        if *scenario == 12 {
+            map.choose_total_tries = 0;
+        }
+        for (seed, record) in records[case_index * 100..(case_index + 1) * 100]
+            .iter()
+            .enumerate()
+        {
+            assert_eq!(record[0], *scenario);
+            assert_eq!(record[1], if (13..=16).contains(scenario) { 1 } else { 0 });
+            assert_eq!(record[2], seed as i32);
+            assert_eq!(record[3] as usize, record.len() - 4);
+            let weights = (0..4)
+                .map(|device| {
+                    if record[1] & (1 << device) == 0 {
+                        WEIGHT
+                    } else {
+                        0
+                    }
+                })
+                .collect::<Vec<_>>();
+            crush_do_rule(&map, 0, seed as u32, &mut actual, *count, &weights).unwrap();
+            assert_eq!(actual, &record[4..], "scenario={scenario} seed={seed}");
+        }
+    }
+}
+
 // Local case 0; v17.2.7/v20.2.4 src/crush/mapper.c::crush_do_rule[_no_retry].
 // Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/crush/mapper.c#L999
 // Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L948
@@ -124,6 +164,132 @@ fn firstn_honors_explicit_leaf_retries() {
     );
     map.choose_total_tries = 0;
     check_vectors(1, &map, 1);
+}
+
+// Local cases 11..20; v17.2.7/v20.2.4 src/crush/mapper.c::crush_do_rule_no_retry.
+// Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/crush/mapper.c#L941
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L890
+#[test]
+fn rule_retry_overrides_match_ceph() {
+    check_retry_vectors(&[
+        (
+            11,
+            2,
+            vec![
+                step(RuleOp::SetChooseTries, 1, 0),
+                step(RuleOp::SetChooseTries, 0, 0),
+                step(RuleOp::SetChooseTries, -1, 0),
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseLeafFirstN, 2, 1),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        (
+            12,
+            2,
+            vec![
+                step(RuleOp::SetChooseLeafTries, 2, 0),
+                step(RuleOp::SetChooseLeafTries, 0, 0),
+                step(RuleOp::SetChooseLeafTries, -1, 0),
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseLeafFirstN, 2, 1),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        (
+            13,
+            2,
+            vec![
+                step(RuleOp::SetChooseLocalTries, 1, 0),
+                step(RuleOp::SetChooseLocalTries, -1, 0),
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseLeafFirstN, 2, 1),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        (
+            14,
+            2,
+            vec![
+                step(RuleOp::SetChooseLocalTries, 1, 0),
+                step(RuleOp::SetChooseLocalTries, 0, 0),
+                step(RuleOp::SetChooseLocalTries, -1, 0),
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseLeafFirstN, 2, 1),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        (
+            15,
+            2,
+            vec![
+                step(RuleOp::SetChooseLocalFallbackTries, 1, 0),
+                step(RuleOp::SetChooseLocalFallbackTries, -1, 0),
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseLeafFirstN, 2, 1),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        (
+            16,
+            2,
+            vec![
+                step(RuleOp::SetChooseLocalFallbackTries, 1, 0),
+                step(RuleOp::SetChooseLocalFallbackTries, 0, 0),
+                step(RuleOp::SetChooseLocalFallbackTries, -1, 0),
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseLeafFirstN, 2, 1),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        (
+            17,
+            2,
+            vec![
+                step(RuleOp::SetChooseLeafVaryR, 2, 0),
+                step(RuleOp::SetChooseLeafVaryR, -1, 0),
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseLeafFirstN, 2, 1),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        (
+            18,
+            2,
+            vec![
+                step(RuleOp::SetChooseLeafVaryR, 2, 0),
+                step(RuleOp::SetChooseLeafVaryR, 0, 0),
+                step(RuleOp::SetChooseLeafVaryR, -1, 0),
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseLeafFirstN, 2, 1),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        (
+            19,
+            2,
+            vec![
+                step(RuleOp::SetChooseLeafStable, 1, 0),
+                step(RuleOp::SetChooseLeafStable, 0, 0),
+                step(RuleOp::SetChooseLeafStable, -1, 0),
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseLeafFirstN, 2, 1),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        (
+            20,
+            1,
+            vec![
+                step(RuleOp::SetChooseTries, 1, 0),
+                step(RuleOp::SetChooseTries, 0, 0),
+                step(RuleOp::SetChooseTries, -1, 0),
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseFirstN, 1, 0),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+    ]);
 }
 
 // Local case 2; v17.2.7/v20.2.4 src/crush/mapper.c::crush_do_rule[_no_retry].

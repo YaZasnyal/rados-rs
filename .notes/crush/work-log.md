@@ -238,3 +238,31 @@ Next in point 3: discriminatory retry regressions, Quincy-specific unit cases,
 STRAW zero/perturbed weights and STRAW2 reweight. Choose arguments, device-class
 queries, retry counters, full OSDMap placement and live-cluster gates remain
 open; these CLI ports do not establish complete CRUSH compatibility.
+
+## Conventional retry overrides after 3919ba6 — 2026-09-17
+
+Completed the retry-regression row in continuation order 3. This adds local
+C-reference cases only; it is not a port of an invented upstream test name.
+
+### Source review and reference preparation
+
+- Used `git -C ../ceph grep -n -i -E 'choose.*tries|tries.*choose|chooseleaf.*(vary|stable)' <commit> -- src/test/crush src/test/cli/crushtool qa` for both pinned commits. The complete outputs are `.renchik/test-parity/task-1-upstream-quincy.log` and `task-1-upstream-tentacle.log`. `src/test/crush/crush.cc` has `SetChooseLeafTries` cases; no upstream test covers all nonpositive/repeated conventional override variants.
+- Read both pinned `src/crush/mapper.c::crush_do_rule_no_retry` switch blocks and every Rust `crush_choose_firstn` caller. Quincy lines 941–969 and Tentacle lines 890–918 give the signed guards: choose/chooseleaf tries require `arg1 > 0`; local/local-fallback/vary-r/stable require `arg1 >= 0`.
+- The C recursive FIRSTN path uses `r >> (vary_r - 1)` only when `vary_r` is nonzero. Cases use 0 and 2, avoiding undefined C shift counts. `mapper-regressions.c` linked against unchanged mapper/hash sources at both commits generated 1,000 new rows; outputs were byte-identical.
+
+### TDD and implementation
+
+`cargo test -p rados --test crush regressions::rule_retry_overrides_match_ceph --offline` initially failed before mapper changes: case 11, seed 0 returned Rust `[3, 0, 1, 2]` instead of pinned-C `[3, 0]`; see `.renchik/test-parity/task-1-red.log`. The corrected focused command passed all 1,000 C vectors; see `task-1-green-focused.log`.
+
+The conventional executor now ignores nonpositive choose overrides, retains
+per-rule local retry/fallback state, and passes that state into each recursive
+FIRSTN call. Nonnegative vary-r/stable values retain their full unsigned value
+inside the mapper; a negative repeat no longer truncates into a behavior-changing
+byte. `mapper-retries.txt` records all exact ordered results and lengths.
+
+### Remaining work
+
+This closes only the zero/nonpositive conventional retry-setting row. Remaining
+order-3 Quincy mapper cases and STRAW/STRAW2 weight cases, plus later choose
+arguments, location/retry observability, OSDMap and live-cluster work, remain
+open.

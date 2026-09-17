@@ -10,9 +10,10 @@ int main(int argc, char **argv)
 {
     assert(argc == 2);
     int scenario = atoi(argv[1]);
-    assert(scenario >= 0 && scenario <= 10);
+    assert(scenario >= 0 && scenario <= 20);
 #ifdef QUINCY
-    assert(scenario == 0 || scenario == 1 || scenario == 2 || scenario == 4);
+    assert(scenario == 0 || scenario == 1 || scenario == 2 || scenario == 4 ||
+           (scenario >= 11 && scenario <= 20));
 #endif
     int root_items[] = {-2, -3}, host0_items[] = {0, 1}, host1_items[] = {2, 3};
     unsigned root_weights[] = {131072, 131072}, host_weights[] = {65536, 65536};
@@ -26,7 +27,7 @@ int main(int argc, char **argv)
         .h = {.id = -3, .type = 1, .alg = 5, .hash = 0, .weight = 131072,
               .size = 2, .items = host1_items}, .item_weights = host_weights};
     struct crush_bucket *buckets[] = {&root.h, &host0.h, &host1.h};
-    struct crush_rule *rule = calloc(1, crush_rule_size(5));
+    struct crush_rule *rule = calloc(1, crush_rule_size(8));
     assert(rule);
     struct crush_rule *rules[] = {rule};
     struct crush_map map = {
@@ -100,6 +101,104 @@ int main(int argc, char **argv)
         rule->steps[1] = (struct crush_rule_step){16, 1, 0};
         rule->steps[2] = (struct crush_rule_step){4, 0, 0};
         break;
+    case 11: /* Nonpositive choose tries leave the positive override intact. */
+        rule->len = 6;
+        rule->steps[0] = (struct crush_rule_step){8, 1, 0};
+        rule->steps[1] = (struct crush_rule_step){8, 0, 0};
+        rule->steps[2] = (struct crush_rule_step){8, -1, 0};
+        rule->steps[3] = (struct crush_rule_step){1, -1, 0};
+        rule->steps[4] = (struct crush_rule_step){6, 2, 1};
+        rule->steps[5] = (struct crush_rule_step){4, 0, 0};
+        count = 2;
+        break;
+    case 12: /* Nonpositive leaf tries leave the positive override intact. */
+        map.choose_total_tries = 0;
+        rule->len = 6;
+        rule->steps[0] = (struct crush_rule_step){9, 2, 0};
+        rule->steps[1] = (struct crush_rule_step){9, 0, 0};
+        rule->steps[2] = (struct crush_rule_step){9, -1, 0};
+        rule->steps[3] = (struct crush_rule_step){1, -1, 0};
+        rule->steps[4] = (struct crush_rule_step){6, 2, 1};
+        rule->steps[5] = (struct crush_rule_step){4, 0, 0};
+        count = 2;
+        break;
+    case 13: /* Positive local retries override map tunables. */
+        rule->len = 5;
+        rule->steps[0] = (struct crush_rule_step){10, 1, 0};
+        rule->steps[1] = (struct crush_rule_step){10, -1, 0};
+        rule->steps[2] = (struct crush_rule_step){1, -1, 0};
+        rule->steps[3] = (struct crush_rule_step){6, 2, 1};
+        rule->steps[4] = (struct crush_rule_step){4, 0, 0};
+        count = 2;
+        break;
+    case 14: /* Zero local retries override, and negative leaves zero intact. */
+        rule->len = 6;
+        rule->steps[0] = (struct crush_rule_step){10, 1, 0};
+        rule->steps[1] = (struct crush_rule_step){10, 0, 0};
+        rule->steps[2] = (struct crush_rule_step){10, -1, 0};
+        rule->steps[3] = (struct crush_rule_step){1, -1, 0};
+        rule->steps[4] = (struct crush_rule_step){6, 2, 1};
+        rule->steps[5] = (struct crush_rule_step){4, 0, 0};
+        count = 2;
+        break;
+    case 15: /* Positive local fallback retries override map tunables. */
+        rule->len = 5;
+        rule->steps[0] = (struct crush_rule_step){11, 1, 0};
+        rule->steps[1] = (struct crush_rule_step){11, -1, 0};
+        rule->steps[2] = (struct crush_rule_step){1, -1, 0};
+        rule->steps[3] = (struct crush_rule_step){6, 2, 1};
+        rule->steps[4] = (struct crush_rule_step){4, 0, 0};
+        count = 2;
+        break;
+    case 16: /* Zero fallback retries override, and negative leaves zero intact. */
+        rule->len = 6;
+        rule->steps[0] = (struct crush_rule_step){11, 1, 0};
+        rule->steps[1] = (struct crush_rule_step){11, 0, 0};
+        rule->steps[2] = (struct crush_rule_step){11, -1, 0};
+        rule->steps[3] = (struct crush_rule_step){1, -1, 0};
+        rule->steps[4] = (struct crush_rule_step){6, 2, 1};
+        rule->steps[5] = (struct crush_rule_step){4, 0, 0};
+        count = 2;
+        break;
+    case 17: /* Positive vary_r is retained when a negative repeat is ignored. */
+        rule->len = 5;
+        rule->steps[0] = (struct crush_rule_step){12, 2, 0};
+        rule->steps[1] = (struct crush_rule_step){12, -1, 0};
+        rule->steps[2] = (struct crush_rule_step){1, -1, 0};
+        rule->steps[3] = (struct crush_rule_step){6, 2, 1};
+        rule->steps[4] = (struct crush_rule_step){4, 0, 0};
+        count = 2;
+        break;
+    case 18: /* vary_r zero is retained after a negative repeat. */
+        rule->len = 6;
+        rule->steps[0] = (struct crush_rule_step){12, 2, 0};
+        rule->steps[1] = (struct crush_rule_step){12, 0, 0};
+        rule->steps[2] = (struct crush_rule_step){12, -1, 0};
+        rule->steps[3] = (struct crush_rule_step){1, -1, 0};
+        rule->steps[4] = (struct crush_rule_step){6, 2, 1};
+        rule->steps[5] = (struct crush_rule_step){4, 0, 0};
+        count = 2;
+        break;
+    case 19: /* stable zero is retained after a negative repeat. */
+        rule->len = 6;
+        rule->steps[0] = (struct crush_rule_step){13, 1, 0};
+        rule->steps[1] = (struct crush_rule_step){13, 0, 0};
+        rule->steps[2] = (struct crush_rule_step){13, -1, 0};
+        rule->steps[3] = (struct crush_rule_step){1, -1, 0};
+        rule->steps[4] = (struct crush_rule_step){6, 2, 1};
+        rule->steps[5] = (struct crush_rule_step){4, 0, 0};
+        count = 2;
+        break;
+    case 20: /* Direct FIRSTN also ignores nonpositive choose-tries repeats. */
+        rule->len = 6;
+        rule->steps[0] = (struct crush_rule_step){8, 1, 0};
+        rule->steps[1] = (struct crush_rule_step){8, 0, 0};
+        rule->steps[2] = (struct crush_rule_step){8, -1, 0};
+        rule->steps[3] = (struct crush_rule_step){1, -1, 0};
+        rule->steps[4] = (struct crush_rule_step){2, 1, 0};
+        rule->steps[5] = (struct crush_rule_step){4, 0, 0};
+        count = 1;
+        break;
     }
     map.working_size = sizeof(struct crush_work)
         + 3 * sizeof(struct crush_work_bucket *)
@@ -108,7 +207,9 @@ int main(int argc, char **argv)
     void *work = calloc(1, map.working_size + 3 * count * sizeof(int));
     assert(work);
     crush_init_workspace(&map, work);
-    for (unsigned mask = 0; mask < 16; ++mask) {
+    unsigned mask_start = scenario >= 13 && scenario <= 16 ? 1 : 0;
+    unsigned masks = scenario >= 11 ? mask_start + 1 : 16;
+    for (unsigned mask = mask_start; mask < masks; ++mask) {
         unsigned weights[4];
         for (int i = 0; i < 4; ++i)
             weights[i] = mask & (1u << i) ? 0 : 65536;

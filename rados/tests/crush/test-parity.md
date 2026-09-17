@@ -19,7 +19,7 @@ cargo test -p rados --test crush --offline
 
 ## Ported tests
 
-**59 tests pass, none ignored.** These establish the scenarios below, not
+**60 tests pass, none ignored.** These establish the scenarios below, not
 complete CRUSH or end-to-end client compatibility.
 
 | Family | Ceph coverage retained | Rust tests | Status |
@@ -31,7 +31,7 @@ complete CRUSH or end-to-end client compatibility.
 | Dedicated MSR topologies, Tentacle | Four scenarios: host/OSD failure, truncated fanout, EC 8+6 and two roots | [functional.rs](functional.rs) | Passing; 3,007 ordered vectors also compared with the C mapper |
 | Weight distribution, both releases | Both `crush_weights.sh` assertions, each over seeds 1..1,000,000 with the original thresholds | [functional.rs](functional.rs) | Passing; device counts also compared with both C mappers |
 | Insufficient mappings, both releases | `bad-mappings.t` rules 0/1, seed 1, ten replicas: exact FIRSTN short result and INDEP NONE slots | [golden.rs](golden.rs) `bad_mappings_compiled`; [functional.rs](functional.rs) `bad_mappings` | Passing with both compiled map encodings and the earlier direct setup; same two upstream cases |
-| Additional mapper regressions | Seven local tests, including 11,200 vectors generated from pinned C mappers | [regressions.rs](regressions.rs) | Passing; additional coverage, not upstream test ports |
+| Additional mapper regressions | Eight local tests, including 12,200 vectors generated from pinned C mappers | [regressions.rs](regressions.rs) | Passing; additional coverage, not upstream test ports |
 
 The golden scenarios are `bobtail_tunables`, `firefly_tunables`,
 `hammer_tunables`, `indep`, `jewel_tunables`, `legacy_tunables`,
@@ -57,8 +57,9 @@ not establish exact placement parity.
 
 Local regressions cover chained INDEP, explicit leaf retries, conventional
 rules containing CHOOSE_MSR, malformed MSR blocks, EMIT reset, truncated MSR
-fanout, and safe rejection of negative MSR fanout. The C oracle supplies
-expectations; negative fanout is a separate Rust validation contract.
+fanout, rule retry overrides (positive, zero, negative and repeated values),
+and safe rejection of negative MSR fanout. The C oracle supplies expected
+values; negative fanout is a separate Rust validation contract.
 
 The seven mapping commands in `set-choose.t::cmd-02/cmd-03/cmd-04`,
 `test-map-firstn-indep.t::cmd-02/cmd-03` and `bad-mappings.t::cmd-02/cmd-03`
@@ -93,7 +94,7 @@ This is the continuation order. “Not ported” does not mean unsupported;
 | Order | Tests / behavior | Status and prerequisite |
 | --- | --- | --- |
 | 3 | Remaining Quincy mapper cases, STRAW zero/perturbed weights, STRAW2 reweight | Not ported; capture original setup and RNG outcome; explicitly resolve Quincy test-only rule type 123 |
-| 3 | Zero/nonpositive rule retry settings | Add local C-reference regressions; local retry overrides and `SetChooseTries=0` currently differ from Ceph |
+| 3 | Zero/nonpositive rule retry settings | Passing; local C-reference cases retain positive, zero, negative and repeated override semantics for conventional FIRSTN and recursive chooseleaf |
 | 4 | Choose arguments: positional weights/IDs and legacy encoding fallback | Missing support: decoder discards choose arguments; import `choose_args_compat` and CLI fixtures after retaining/selecting them |
 | 4 | Device-class shadow mapping, hierarchy/location queries, retry counters | Incomplete coverage; import class maps and implement the missing query/observation APIs |
 | 5 | OSDMap raw/up/acting sets, primary/affinity, EC positions and map transitions | Not ported as a complete reference suite; capture original OSDMap setup/deltas |
