@@ -117,6 +117,26 @@ All four Tentacle binaries equal the respective Quincy bytes followed by
 two little-endian u32 MSR defaults (100/100). Both encodings are checked in
 and decoded by Cargo tests, which need neither Docker nor a Ceph checkout.
 
+## Device-class fixture
+
+`device-class.crush` and `device-class.t` are unchanged copies from both pins.
+`generate-device-class-reference.py` verifies each source copy, performs the
+original compile/decompile/recompile byte comparisons in each network-disabled
+container, and writes the two binary encodings plus the C placement grid for
+rules 1/2, x=0..19, replicas 3. The grid is a local differential addition;
+each result is checked to belong to the requested class. Regenerate or verify
+it with:
+
+```sh
+python3 rados/tests/crush/reference/generate-device-class-reference.py ../ceph --check
+```
+
+| Generated file | SHA256 |
+| --- | --- |
+| `device-class-quincy.crushmap` | `27f242f550bac5045e996f755316657ddf1f9113053a8c6641aec04d230754ed` |
+| `device-class-tentacle.crushmap` | `6ba67dfe56744d233a7b8b8b12671adaff002715c0a3eb8a5c9a206b8d4b6fa8` |
+| `device-class-vectors.txt` | `77c06b8a96b7c091e6115633c558b87b39958c8a421226799c5fc8a3066d6e19` |
+
 ## Choose-argument fixtures
 
 `choose-args-compat-*.crushmap` is produced by each pinned `crushtool` from

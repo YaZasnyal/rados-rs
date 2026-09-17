@@ -271,6 +271,22 @@ impl CrushMap {
         self.get_device_class(device_id) == Some(class_name)
     }
 
+    /// Resolve a shadow bucket to its original bucket and optional device class.
+    pub fn split_id_class(&self, id: i32) -> crate::crush::Result<(i32, Option<i32>)> {
+        if !self.names.contains_key(&id) {
+            return Err(CrushError::ItemNotFound(id));
+        }
+        for (&original, classes) in &self.class_bucket {
+            if let Some(class) = classes
+                .iter()
+                .find_map(|(&class, &shadow)| (shadow == id).then_some(class))
+            {
+                return Ok((original, Some(class)));
+            }
+        }
+        Ok((id, None))
+    }
+
     pub fn immediate_parent(&self, id: i32) -> crate::crush::Result<(String, String)> {
         for bucket in self.buckets.iter().flatten() {
             if self.is_shadow_bucket(bucket.id) || !bucket.items.contains(&id) {

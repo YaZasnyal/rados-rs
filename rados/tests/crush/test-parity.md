@@ -19,7 +19,7 @@ cargo test -p rados --test crush --offline
 
 ## Ported tests
 
-**84 tests pass, none ignored.** These establish the scenarios below, not
+**88 tests pass, none ignored.** These establish the scenarios below, not
 complete CRUSH or end-to-end client compatibility.
 
 | Family | Ceph coverage retained | Rust tests | Status |
@@ -34,6 +34,7 @@ complete CRUSH or end-to-end client compatibility.
 | Legacy STRAW / STRAW2 weights, Quincy | `straw_zero` (10,000), `straw_same` (100,000), `straw2_reweight` (1,000,000) | [weights.rs](weights.rs) | Coverage: Ported; Readiness: Ready now; Verification: Passing. C-built STRAW lengths, output digests and unseeded C RNG realization are recorded in the reference runner. |
 | Insufficient mappings, both releases | `bad-mappings.t` rules 0/1, seed 1, ten replicas: exact FIRSTN short result and INDEP NONE slots | [golden.rs](golden.rs) `bad_mappings_compiled`; [functional.rs](functional.rs) `bad_mappings` | Passing with both compiled map encodings and the earlier direct setup; same two upstream cases |
 | Retry-profile observation, both releases | `show-choose-tries.t` rule 0 FIRSTN/count 2 and rule 1 INDEP/count 1: both full 50-bin profiles, distinct fresh commands | [profile.rs](profile.rs) | Passing with both compiled encodings; caller-owned batch profile accumulates, explicit start resets, and stop discards |
+| Device-class shadows, both releases | unchanged `device-class.crush`/`.t`; full decoded classes, all ten shadows, class buckets, source-produced TAKEs and C placement grid (rules 1/2, x=0..19, replicas 3) | [classes.rs](classes.rs) | Coverage: Ported; Readiness: Ready now; Verification: Passing. `split_id_class` returns the base bucket plus `Option<class>`; `None` is the Rust representation of C's class ID `-1`, and an unknown ID is `ItemNotFound` instead of C's `-EINVAL`. Editor/class-tree generation and reclassification mappings remain separate scope. |
 | Additional mapper regressions | Eight local tests, including 12,600 vectors generated from pinned C mappers | [regressions.rs](regressions.rs) | Passing; additional coverage, not upstream test ports |
 
 The golden scenarios are `bobtail_tunables`, `firefly_tunables`,
@@ -140,7 +141,7 @@ This is the continuation order. “Not ported” does not mean unsupported;
 | 3 | Remaining Quincy mapper cases, STRAW zero/perturbed weights, STRAW2 reweight | Passing; five cases reuse their existing NORMAL ports after the raw-123/type-3 proof, and three assertion-bearing weight cases retain original setup/RNG outcome |
 | 3 | Zero/nonpositive rule retry settings | Passing; local C-reference cases retain positive, zero, negative and repeated override semantics for conventional FIRSTN and recursive chooseleaf |
 | 4 | Choose arguments: positional weights/IDs and legacy encoding fallback | Coverage: Ported; Readiness: Ready now; Verification: Passing — 2,100 pinned C vectors cover direct FIRSTN/INDEP, recursive CHOOSELEAF, chained steps, and Tentacle MSR FIRSTN/INDEP with unavailable-device retries. All 16 published QA transition states have decoded canonical/compat fields and 160 ordered C/Rust placement rows; update/no-update pre/remove retain both weight-set positions and IDs at real index 0 without default fallback. CLI indexes 1–6 retain all declared arguments and every bucket's type, size, canonical weights and items. Malformed source-byte mutations assert the bucket/weight/ID guards. Producer APIs remain outside this retained client-observation scope. |
-| 4 | Device-class shadow mapping, hierarchy/location queries, retry counters | Coverage: Partial; hierarchy/location queries and retry counters are Ported, Ready now and Passing for both pins, including `location.t`'s unchanged large map and `show-choose-tries.t`'s full profiles. Device-class mapping remains incomplete. |
+| 4 | Device-class reclassification mappings | Coverage: Partial; class/shadow fixture decoding, reverse shadow lookup and C-referenced class placement are Ported, Ready now and Passing for both pins. Reclassify before/after map comparisons remain task 6b; class editor/formatter operations remain producer-side adaptations. |
 | 5 | OSDMap raw/up/acting sets, primary/affinity, EC positions and map transitions | Not ported as a complete reference suite; capture original OSDMap setup/deltas |
 | 5 | Original client I/O and pool scenarios on both releases | Not run; requires matching clusters |
 

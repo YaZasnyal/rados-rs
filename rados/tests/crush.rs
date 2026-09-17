@@ -20,3 +20,6 @@ mod hierarchy;
 
 #[path = "crush/profile.rs"]
 mod profile;
+
+#[path = "crush/classes.rs"]
+mod classes;

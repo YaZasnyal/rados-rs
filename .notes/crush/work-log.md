@@ -411,3 +411,26 @@ caller-owned opt-in object passed through the existing conventional mapper and
 both recursive paths. FIRSTN counts accepted replicas; INDEP counts once after
 each completed loop. Backing storage has the C-compatible extra terminal bin,
 while snapshots expose only `choose_total_tries` bins.
+
+## Device-class shadow fixture and query parity — 2026-09-17
+
+Coverage: Ported. Readiness: Ready now. Verification: Passing. Both pinned
+`device-class.crush` and `device-class.t` files are byte-identical and are
+checked in unchanged. The pinned network-disabled tools reproduced each
+original compile/decompile/recompile comparison and generated separate binary
+encodings. `classes.rs` asserts all 13 decoded class assignments, every
+shadow ID/name, membership, item weight and aggregate weight, including the
+source root's unusual 4.0 weight, all `class_bucket` edges, and rules 1/2/3's
+actual TAKE targets. The local C differential grid retains rules 1/2 over
+x=0..19 with replicas 3, preserves ordered output, and checks class
+membership for every returned device.
+
+The initial focused fixture test passed before production changes. The only
+new API is `split_id_class`, which reverses decoded `class_bucket` metadata:
+it returns `(base, Some(class))` for a shadow and `(base, None)` for an
+ordinary bucket. `None` adapts C's class ID `-1`; a missing ID is the existing
+Rust `ItemNotFound` error rather than C's `-EINVAL`. This preserves the
+consumer behavior in the pinned `CrushWrapperTest.split_id_class` without
+porting class creation, cloning, trimming or reclassification editors. Those
+producer operations and the reclassify before/after mapping pairs remain task
+6b scope.
