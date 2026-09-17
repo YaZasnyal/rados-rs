@@ -2615,3 +2615,85 @@ impl OSDClient {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::crush::{
+        BucketAlgorithm, BucketData, CrushBucket, CrushMap, CrushRule, CrushRuleStep, PgId, RuleOp,
+        RuleType,
+    };
+    use crate::denc::Epoch;
+    use crate::osdclient::osdmap::{OSDMap, OSDMapIncremental, PgPool};
+
+    #[test]
+    fn pg_route_keeps_primary_temp_separate_from_acting() {
+        let mut crush = CrushMap::new();
+        crush.max_buckets = 1;
+        crush.max_devices = 3;
+        crush.buckets = vec![Some(CrushBucket {
+            id: -1,
+            bucket_type: 1,
+            alg: BucketAlgorithm::Straw2,
+            hash: 0,
+            weight: 3 * 0x1_0000,
+            size: 3,
+            items: vec![0, 1, 2],
+            data: BucketData::Straw2 {
+                item_weights: vec![0x1_0000; 3],
+            },
+        })];
+        crush.rules = vec![Some(CrushRule {
+            rule_id: 0,
+            rule_type: RuleType::Replicated,
+            steps: vec![
+                CrushRuleStep {
+                    op: RuleOp::Take,
+                    arg1: -1,
+                    arg2: 0,
+                },
+                CrushRuleStep {
+                    op: RuleOp::ChooseFirstN,
+                    arg1: 0,
+                    arg2: 0,
+                },
+                CrushRuleStep {
+                    op: RuleOp::Emit,
+                    arg1: 0,
+                    arg2: 0,
+                },
+            ],
+        })];
+
+        let pg = PgId::new(7, 1);
+        let mut map = OSDMap::new();
+        map.max_osd = 3;
+        map.osd_state = vec![0x3; 3];
+        map.osd_weight = vec![0x1_0000; 3];
+        map.osd_primary_affinity = vec![0x1_0000; 3];
+        map.crush = Some(crush);
+        map.pools.insert(
+            7,
+            PgPool {
+                pool_type: PgPool::TYPE_REPLICATED,
+                size: 3,
+                pg_num: 64,
+                pgp_num: 64,
+                crush_rule: 0,
+                tier_of: -1,
+                ..Default::default()
+            },
+        );
+        let mut pg_temp = OSDMapIncremental::new(Epoch::new(1));
+        pg_temp.new_pg_temp.insert(pg, vec![0, 1, 2]);
+        pg_temp.apply_to(&mut map).unwrap();
+        let mut primary_temp = OSDMapIncremental::new(Epoch::new(2));
+        primary_temp.new_primary_temp.insert(pg, 2);
+        primary_temp.apply_to(&mut map).unwrap();
+
+        let placement = OSDClient::pg_to_osds_in_map(&map, pg).unwrap();
+        assert_eq!(placement.acting, vec![0, 1, 2]);
+        assert_eq!(placement.acting_primary, 2);
+        assert_ne!(placement.acting[0], placement.acting_primary);
+    }
+}

@@ -2869,6 +2869,8 @@ impl OSDMap {
         }
 
         let mut acting = self.pg_temp.get(pg).cloned().unwrap_or_default();
+        let mut temp_primary = None;
+        let mut has_nonempty_temp = false;
         if self.pg_temp.contains_key(pg) {
             if pool.is_replicated() {
                 acting.retain(|&osd| osd >= 0 && self.is_up(osd));
@@ -2878,6 +2880,10 @@ impl OSDMap {
                         *osd = CRUSH_ITEM_NONE;
                     }
                 }
+            }
+            has_nonempty_temp = !acting.is_empty();
+            temp_primary = acting.iter().copied().find(|&osd| osd != CRUSH_ITEM_NONE);
+            if pool.is_erasure() {
                 acting = pool.pgtemp_undo_primaryfirst_vec(true, &acting);
             }
         }
@@ -2885,6 +2891,9 @@ impl OSDMap {
             acting = up.clone();
         }
         let acting_primary = self.primary_temp.get(pg).copied().unwrap_or_else(|| {
+            if has_nonempty_temp {
+                return temp_primary.unwrap_or(-1);
+            }
             acting
                 .iter()
                 .copied()
@@ -3831,36 +3840,77 @@ mod tests {
     // Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/osd/TestOSDMap.cc#L502
     #[test]
     fn placement_ports_source_map_and_temp_primaries() {
-        let map = source_six_osd_map();
+        let mut map = source_six_osd_map();
         let pg = PgId::new(2, 0);
         let placement = map.pg_to_placement(&pg).unwrap();
         // Pinned C++ Jewel/STRAW2 setup maps raw PG 2.0 to this order.
         assert_eq!(placement.raw, vec![3, 5, 1]);
-        assert_eq!(placement.raw, placement.up);
-        assert_eq!(placement.acting, placement.up);
-        assert_eq!(placement.up.len(), 3);
-        assert_eq!(placement.up_primary, placement.up[0]);
-        assert_eq!(placement.acting_primary, placement.acting[0]);
-        assert_eq!(map.pg_to_osds(&pg).unwrap(), placement.raw);
-        assert_eq!(map.pg_to_acting_osds(&pg).unwrap(), placement.acting);
+        assert_eq!(placement.up, vec![3, 5, 1]);
+        assert_eq!(placement.acting, vec![3, 5, 1]);
+        assert_eq!(placement.up_primary, 3);
+        assert_eq!(placement.acting_primary, 3);
+        assert_eq!(map.pg_to_osds(&pg).unwrap(), vec![3, 5, 1]);
+        assert_eq!(map.pg_to_acting_osds(&pg).unwrap(), vec![3, 5, 1]);
+        assert_eq!(map.pg_to_placement(&pg).unwrap().acting_primary, 3);
+        assert_eq!(map.lock_acting_cache().unwrap().len(), 1);
 
-        let mut temp_map = source_six_osd_map();
         let mut pg_temp = OSDMapIncremental::new(Epoch::new(3));
-        let mut swapped = placement.acting.clone();
-        let last = swapped.len() - 1;
-        swapped.swap(0, last);
-        pg_temp.new_pg_temp.insert(pg, swapped.clone());
-        pg_temp.apply_to(&mut temp_map).unwrap();
-        assert_eq!(temp_map.pg_to_placement(&pg).unwrap().acting, swapped);
+        pg_temp.new_pg_temp.insert(pg, vec![1, 5, 3]);
+        pg_temp.apply_to(&mut map).unwrap();
+        let after_temp = map.pg_to_placement(&pg).unwrap();
+        assert_eq!(after_temp.raw, vec![3, 5, 1]);
+        assert_eq!(after_temp.up, vec![3, 5, 1]);
+        assert_eq!(after_temp.acting, vec![1, 5, 3]);
+        assert_eq!(after_temp.up_primary, 3);
+        assert_eq!(after_temp.acting_primary, 1);
+        assert_eq!(map.lock_acting_cache().unwrap().len(), 1);
 
-        let mut primary_map = source_six_osd_map();
-        let acting = primary_map.pg_to_placement(&pg).unwrap().acting;
-        let mut primary_temp = OSDMapIncremental::new(Epoch::new(3));
-        primary_temp.new_primary_temp.insert(pg, acting[1]);
-        primary_temp.apply_to(&mut primary_map).unwrap();
-        let after = primary_map.pg_to_placement(&pg).unwrap();
-        assert_eq!(after.acting, acting);
-        assert_eq!(after.acting_primary, acting[1]);
+        let mut primary_temp = OSDMapIncremental::new(Epoch::new(4));
+        primary_temp.new_primary_temp.insert(pg, 5);
+        primary_temp.apply_to(&mut map).unwrap();
+        let after_primary = map.pg_to_placement(&pg).unwrap();
+        assert_eq!(after_primary.raw, vec![3, 5, 1]);
+        assert_eq!(after_primary.up, vec![3, 5, 1]);
+        assert_eq!(after_primary.acting, vec![1, 5, 3]);
+        assert_eq!(after_primary.up_primary, 3);
+        assert_eq!(after_primary.acting_primary, 5);
+    }
+
+    #[test]
+    fn optimized_ec_pg_temp_preserves_stored_primary_and_none_primary() {
+        let mut map = source_six_osd_map();
+        map.max_osd = 11;
+        map.osd_state.resize(11, CEPH_OSD_EXISTS | CEPH_OSD_UP);
+        map.osd_weight.resize(11, 0x1_0000);
+        map.osd_primary_affinity.resize(11, 0x1_0000);
+        let pool = map.pools.get_mut(&1).unwrap();
+        pool.size = 6;
+        pool.flags = PgPool::FLAG_EC_OPTIMIZATIONS;
+        pool.nonprimary_shards.insert(ShardId::new(1));
+        pool.nonprimary_shards.insert(ShardId::new(2));
+        pool.nonprimary_shards.insert(ShardId::new(3));
+
+        let pg = PgId::new(1, 0);
+        let mut temp = OSDMapIncremental::new(Epoch::new(3));
+        temp.new_pg_temp
+            .insert(pg, vec![CRUSH_ITEM_NONE, 9, 10, 6, 7, 8]);
+        temp.apply_to(&mut map).unwrap();
+
+        let placement = map.pg_to_placement(&pg).unwrap();
+        assert_eq!(placement.raw, vec![0, 5, 1, 4, 3, 2]);
+        assert_eq!(placement.up, vec![0, 5, 1, 4, 3, 2]);
+        assert_eq!(placement.up_primary, 0);
+        assert_eq!(map.pg_to_osds(&pg).unwrap(), vec![0, 5, 1, 4, 3, 2]);
+        assert_eq!(placement.acting, vec![CRUSH_ITEM_NONE, 6, 7, 8, 9, 10]);
+        assert_eq!(placement.acting_primary, 9);
+        assert_eq!(map.pg_to_spg_shard(&pg).unwrap(), ShardId::new(4));
+
+        let mut all_none = OSDMapIncremental::new(Epoch::new(4));
+        all_none.new_pg_temp.insert(pg, vec![CRUSH_ITEM_NONE; 6]);
+        all_none.apply_to(&mut map).unwrap();
+        let placement = map.pg_to_placement(&pg).unwrap();
+        assert_eq!(placement.acting, vec![CRUSH_ITEM_NONE; 6]);
+        assert_eq!(placement.acting_primary, -1);
     }
 
     // Upstream: v20.2.4/src/test/osd/TestOSDMap.cc::OSDMapTest.pgtemp_primaryfirst
