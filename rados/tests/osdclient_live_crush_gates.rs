@@ -334,21 +334,20 @@ fn assert_erasure_rule(map: &CrushMap) {
     let rule = map.get_rule(1).expect("generated erasure rule");
     assert_eq!(map.rule_names.get(&1).map(String::as_str), Some("rule3"));
     assert_eq!(rule.rule_type, RuleType::Erasure);
-    assert_eq!(rule.steps.len(), 5);
     assert_eq!(
-        (rule.steps[0].op, rule.steps[0].arg1, rule.steps[0].arg2),
-        (RuleOp::SetChooseLeafTries, 5, 0)
+        rule.steps
+            .iter()
+            .map(|step| (step.op, step.arg1, step.arg2))
+            .collect::<Vec<_>>(),
+        [
+            (RuleOp::SetChooseLeafTries, 5, 0),
+            (RuleOp::SetChooseTries, 100, 0),
+            (RuleOp::Take, -1, 0),
+            (RuleOp::ChooseLeafIndep, 0, 1),
+            (RuleOp::Emit, 0, 0),
+        ]
     );
-    assert_eq!(
-        (rule.steps[1].op, rule.steps[1].arg1, rule.steps[1].arg2),
-        (RuleOp::SetChooseTries, 100, 0)
-    );
-    assert_eq!((rule.steps[2].op, rule.steps[2].arg1), (RuleOp::Take, -1));
-    assert_eq!(
-        (rule.steps[3].op, rule.steps[3].arg1, rule.steps[3].arg2),
-        (RuleOp::ChooseLeafIndep, 0, 1)
-    );
-    assert_eq!(rule.steps[4].op, RuleOp::Emit);
+    assert_eq!(map.names.get(&-1).map(String::as_str), Some("default"));
 }
 
 // Upstream: v17.2.7/qa/standalone/mon/osd-crush.sh::TEST_crush_rule_create_erasure
