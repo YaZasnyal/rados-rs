@@ -5,6 +5,10 @@ and do not implement CRUSH. The C runners construct inputs and link the unmodifi
 `src/crush/mapper.c` and `hash.c` from the pinned Ceph commits. The functional
 runner also links `builder.c` and `crush.c` to verify STRAW construction.
 
+The current client-scope decisions, excluded producer behavior, and live-gate
+recipe are in [DISPOSITIONS.md](DISPOSITIONS.md). This README contains the
+complete reproducible tool, source, command, and artifact provenance.
+
 | Program | Purpose and input origin |
 | --- | --- |
 | [mapper-regressions.c](mapper-regressions.c) | Generates local regression scenarios, not named upstream tests. Reproduction and output provenance: [generated mapper regressions](#generated-mapper-regressions). |
