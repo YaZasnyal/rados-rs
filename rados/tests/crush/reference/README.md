@@ -117,6 +117,41 @@ All four Tentacle binaries equal the respective Quincy bytes followed by
 two little-endian u32 MSR defaults (100/100). Both encodings are checked in
 and decoded by Cargo tests, which need neither Docker nor a Ceph checkout.
 
+## Legacy Uniform, List, and TREE buckets
+
+`generate-legacy-bucket-reference.py ../ceph --check` verifies and regenerates
+two minimal local C-mapper maps (`uniform-local.crush` and `list-local.crush`)
+and the original `add-item-in-tree.t` final map. The local maps have no
+selected upstream ordered mapping oracle; they use both pinned `crushtool`
+releases to capture exact FIRSTN/INDEP rows for x=0..7, three replicas, and
+complete, collision, unavailable-device retry, and NONE-hole partial-availability
+cases. The TREE fixture replays all eight original additions, compares the decompiled
+result with `tree.template.final`, and captures all three original rules for
+complete and collision-shortened mappings. The upstream input/test bytes are
+identical at both pins: `add-item-in-tree.t` SHA256
+`6a66157de9981d5eb40ab291c43363e5a86f57f64411926287308bd895aeeb52`,
+`tree.template` `0622bacb6b14b47c766bda9cd3a2e63d5f616c8c48cc4dd533361fcee8731b80`,
+and `tree.template.final` `4a22c67c29bc3d9fc640a1fe7425d93ceac96414ca8320c759e66b5ae55bf1c8`.
+
+TREE's `num_nodes` is an on-wire `u8` in both pinned `crush.h` definitions;
+the generated map first exposed the prior four-byte Rust decode. Cargo now
+checks decoded TREE node counts and 352 exact ordered C vectors across the
+two releases. Generation uses no Rust encoder or mapper output.
+
+| Generated file | SHA256 |
+| --- | --- |
+| `uniform-local.crush` / `list-local.crush` | `4a3fa26db6d2f73f0decfa63218e5199bf5fa27448266def4428cf659b1dfc53` / `0bde3495ffa474f9471a42d0a73cc6cd1dd1d45f6a8dea233d0906539dd5b700` |
+| `uniform-local-quincy.crushmap` / `uniform-local-tentacle.crushmap` | `7c84afaf0210fd4823c946c98d8f4ee740cbe5aa1f1021e2a0dd765080ab0e44` / `eb6f3d56f38924d7ad23d7817af316865b0db523049b79d30b10e1b8515631b4` |
+| `list-local-quincy.crushmap` / `list-local-tentacle.crushmap` | `a78c587501722ad0cfdfbb2bbdaa4755dbcbd8ee8333c054530bd4aaea049d01` / `7fe4dbf98b95ac20650c0f7f1dcabd26140bb6a4e0f159480f08092effe9e1f4` |
+| `tree-add-item-quincy.crushmap` / `tree-add-item-tentacle.crushmap` | `6abad2e583a755308f8e877b71fac84717f1291518e4f4f4f164e53765351eeb` / `156a8e40e146044d78a426f5bcc16b51f7f08693d598d828c5d72d77b8ca024b` |
+| `legacy-bucket-vectors.txt` | `7434991dd627b959d6fd95a3e2995025d9d7107c95d5e7c0fa79aeed2823cee1` |
+
+For a newer pinned Ceph release, add its name, version, commit, and image
+digest to the generator's `releases` tuple, run it without `--check`, inspect
+the new release-specific maps and vectors against these rows, then run
+`cargo test -p rados --test crush --offline`. Keep a new fixture only when
+bytes or vectors differ.
+
 ## Device-class fixture
 
 `device-class.crush` and `device-class.t` are unchanged copies from both pins.

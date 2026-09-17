@@ -23,7 +23,7 @@ differs; otherwise verify and reuse the existing one.
 
 ## Ported tests
 
-**90 tests pass, none ignored.** These establish the scenarios below, not
+**92 tests pass, none ignored.** These establish the scenarios below, not
 complete CRUSH or end-to-end client compatibility.
 
 | Family | Ceph coverage retained | Rust tests | Status |
@@ -39,6 +39,7 @@ complete CRUSH or end-to-end client compatibility.
 | Insufficient mappings, both releases | `bad-mappings.t` rules 0/1, seed 1, ten replicas: exact FIRSTN short result and INDEP NONE slots | [golden.rs](golden.rs) `bad_mappings_compiled`; [functional.rs](functional.rs) `bad_mappings` | Passing with both compiled map encodings and the earlier direct setup; same two upstream cases |
 | Retry-profile observation, both releases | `show-choose-tries.t` rule 0 FIRSTN/count 2 and rule 1 INDEP/count 1: both full 50-bin profiles, distinct fresh commands | [profile.rs](profile.rs) | Passing with both compiled encodings; caller-owned batch profile accumulates, explicit start resets, and stop discards |
 | Device classes and reclassification, both releases | decoded class/shadow lifecycle, ten successful `reclassify.t` pairs, and pinned C placement results | [classes.rs](classes.rs) | Coverage: Ported; Readiness: Ready now; Verification: Passing. Producer/editor APIs remain outside client scope. |
+| Legacy Uniform/List/TREE, both releases | `add-item-in-tree.t` final TREE map, all three rules, and 352 pinned-C ordered vectors. Uniform/List are minimal local C differential contracts for complete, collision, retry, and NONE-hole partial-availability cases. | [legacy_buckets.rs](legacy_buckets.rs) | Coverage: Ported; Readiness: Ready now; Verification: Passing. TREE `num_nodes` decodes as its C wire `u8`; compiler/editor APIs remain outside client scope. |
 | Additional mapper regressions | Eight local tests, including 12,600 vectors generated from pinned C mappers | [regressions.rs](regressions.rs) | Passing; additional coverage, not upstream test ports |
 
 The golden scenarios are `bobtail_tunables`, `firefly_tunables`,
@@ -149,7 +150,6 @@ This is the continuation order. “Not ported” does not mean unsupported;
 | 5 | OSDMap raw/up/acting sets, primary/affinity, EC positions and map transitions | Not ported as a complete reference suite; capture original OSDMap setup/deltas |
 | 5 | Original client I/O and pool scenarios on both releases | Not run; requires matching clusters |
 
-Uniform, List and Tree do not yet have complete reference mapping coverage.
 The old corpus integration tests can return successfully without their
 external inputs; they do not count as passing compatibility checks.
 

@@ -23,3 +23,6 @@ mod profile;
 
 #[path = "crush/classes.rs"]
 mod classes;
+
+#[path = "crush/legacy_buckets.rs"]
+mod legacy_buckets;
