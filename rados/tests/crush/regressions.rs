@@ -1,5 +1,5 @@
 //! Local differential regressions, not ports of named upstream tests.
-//! Expected vectors come from pinned Ceph C code; see fixtures/README.md.
+//! Expected vectors come from pinned Ceph C code; see reference/README.md.
 
 use rados::crush::{
     BucketAlgorithm, BucketData, CrushBucket, CrushError, CrushMap, CrushRule, CrushRuleStep,
@@ -55,7 +55,7 @@ fn map_with_rule(rule_type: RuleType, steps: Vec<CrushRuleStep>) -> CrushMap {
 }
 
 fn check_vectors(scenario: i32, map: &CrushMap, count: usize) {
-    let records: Vec<Vec<i32>> = include_str!("fixtures/mapper-regressions.txt")
+    let records: Vec<Vec<i32>> = include_str!("reference/mapper-regressions.txt")
         .lines()
         .map(|line| {
             line.split_whitespace()

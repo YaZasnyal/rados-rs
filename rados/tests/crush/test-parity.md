@@ -2,10 +2,9 @@
 
 This page records what has been ported and what remains. Test preparation,
 execution history and audit notes live in [`.notes/crush`](../../../.notes/crush).
-Fixture sources, checksums and regeneration instructions are in
-[fixtures/README.md](fixtures/README.md).
-Local C reference runners and their origin are documented in
-[reference/README.md](reference/README.md).
+Unmodified upstream maps and transcripts are documented in
+[fixtures/README.md](fixtures/README.md). Local C reference runners, generated
+outputs and regeneration instructions are in [reference/README.md](reference/README.md).
 
 ## Reference releases
 

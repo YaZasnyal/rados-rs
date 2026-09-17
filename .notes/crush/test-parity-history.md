@@ -349,7 +349,7 @@ regressions, and no safe-negative-MSR-fanout test. Expected results therefore
 come from executing unmodified pinned C sources. The negative-fanout test
 is labeled `Rust contract; no upstream analogue found`.
 
-[Fixture provenance and the tested regeneration command](../../rados/tests/crush/fixtures/README.md#generated-mapper-regressions)
+[Fixture provenance and the tested regeneration command](../../rados/tests/crush/reference/README.md#generated-mapper-regressions)
 include the C input generator, source revisions, compiler, SHA256 and all
 inputs. No Ceph tools or checkout are needed to run the Rust tests.
 The C comparison established identical output for 6,400 conventional-rule
