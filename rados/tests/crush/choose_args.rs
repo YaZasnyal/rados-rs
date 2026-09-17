@@ -105,6 +105,31 @@ fn choose_args_compat_keeps_alternate_weights_and_legacy_folds_them() {
 }
 
 #[test]
+fn choose_args_count_is_independent_of_bucket_count() {
+    // Upstream: v17.2.7/src/crush/CrushWrapper.cc::encode/decode
+    // Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/crush/CrushWrapper.cc#L3052-L3055
+    // Upstream: v20.2.4/src/crush/CrushWrapper.cc::encode/decode
+    // Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/CrushWrapper.cc#L3210-L3213
+    for fixture in [
+        include_bytes!("reference/choose-args-compat-quincy.crushmap").as_slice(),
+        include_bytes!("reference/choose-args-compat-tentacle.crushmap").as_slice(),
+    ] {
+        let mut bytes = fixture.to_vec();
+        let count_offset = bytes.len() - 36;
+        assert_eq!(&bytes[count_offset..count_offset + 4], &1u32.to_le_bytes());
+        bytes[count_offset..count_offset + 4].copy_from_slice(&9u32.to_le_bytes());
+        for index in 0i64..8 {
+            bytes.extend_from_slice(&index.to_le_bytes());
+            bytes.extend_from_slice(&0u32.to_le_bytes());
+        }
+
+        let map = CrushMap::decode(&mut Bytes::from(bytes)).unwrap();
+        assert_eq!(map.buckets.len(), 8);
+        assert_eq!(map.choose_args.len(), 9);
+    }
+}
+
+#[test]
 fn choose_args_cli_fixture_keeps_empty_index_and_signed_hash_ids() {
     // Upstream: v17.2.7/src/test/cli/crushtool/choose-args.t::cmd-01
     // Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/choose-args.t#L1

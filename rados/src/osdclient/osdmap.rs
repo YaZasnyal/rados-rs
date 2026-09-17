@@ -3084,9 +3084,10 @@ impl OSDMap {
     /// raw CRUSH result. This is deliberately before down filtering, matching
     /// C++ `OSDMap::_apply_upmap`.
     fn apply_upmap(&self, pg: &PgId, osds: &mut Vec<i32>) {
-        if let Some(upmap) = self.pg_upmap.get(pg)
-            && !upmap.iter().any(|&osd| self.upmap_target_is_out(osd))
-        {
+        if let Some(upmap) = self.pg_upmap.get(pg) {
+            if upmap.iter().any(|&osd| self.upmap_target_is_out(osd)) {
+                return;
+            }
             *osds = upmap.clone();
         }
         if let Some(items) = self.pg_upmap_items.get(pg) {
@@ -5208,18 +5209,20 @@ mod tests {
     #[test]
     fn test_apply_upmap_rejects_pg_upmap_with_out_target() {
         // CRUSH gives [0, 1, 2]. Admin upmap targets [3, 4, 5] but OSD 4
-        // is OUT (weight 0). C++ rejects the entire upmap and falls back
-        // to the raw CRUSH result.
+        // is OUT (weight 0). C++ rejects the entire operation, including
+        // otherwise-valid item and primary overrides.
         let mut map = make_osdmap_with_states(vec![0x3, 0x3, 0x3, 0x3, 0x3, 0x3]);
         map.osd_weight = vec![0x10000, 0x10000, 0x10000, 0x10000, 0, 0x10000];
         let pg = PgId::new(1, 42);
         map.pg_upmap.insert(pg, vec![3, 4, 5]);
+        map.pg_upmap_items.insert(pg, vec![(1, 3)]);
+        map.pg_upmap_primaries.insert(pg, 2);
         let mut osds = vec![0, 1, 2];
         map.apply_upmap(&pg, &mut osds);
         assert_eq!(
             osds,
             vec![0, 1, 2],
-            "pg_upmap with OUT target should be rejected"
+            "invalid pg_upmap should stop all upmap processing"
         );
     }
 

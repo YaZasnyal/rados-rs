@@ -13,6 +13,8 @@ use rados::crush::{CrushMap, RuleOp, RuleType, crush_do_rule_with_choose_args};
 mod common;
 use common::build_test_client;
 
+const STRICT_BASH: [&str; 5] = ["bash", "-e", "-o", "pipefail", "-lc"];
+
 fn admin_output(script: &str) -> Output {
     let container = std::env::var("CEPH_LIVE_CONTAINER")
         .expect("CEPH_LIVE_CONTAINER is required; use live-rust-crush-gates.sh");
@@ -20,9 +22,23 @@ fn admin_output(script: &str) -> Output {
         .expect("CEPH_LIVE_CONFIG is required; use live-rust-crush-gates.sh");
     let script = format!("export CEPH_CONF={config}; {script}");
     Command::new("docker")
-        .args(["exec", &container, "bash", "-lc", &script])
+        .args(["exec", &container])
+        .args(STRICT_BASH)
+        .arg(&script)
         .output()
         .expect("run pinned Ceph admin command")
+}
+
+#[test]
+fn admin_shell_propagates_intermediate_failures() {
+    for script in ["false\ntrue", "false | true\ntrue"] {
+        let status = Command::new(STRICT_BASH[0])
+            .args(&STRICT_BASH[1..])
+            .arg(script)
+            .status()
+            .expect("run strict shell check");
+        assert!(!status.success(), "script unexpectedly succeeded: {script}");
+    }
 }
 
 fn admin(script: &str) {

@@ -124,7 +124,7 @@ impl CrushMap {
         // these fixtures; it does not implement a CRUSH map encoder.
         if data.remaining() > 0 {
             let choose_args_size = u32::decode(data, 0)?;
-            if choose_args_size > map.buckets.len() as u32 {
+            if choose_args_size as usize > data.remaining() / 12 {
                 return Err(CrushError::DecodeError(format!(
                     "Too many choose-argument sets: {choose_args_size}"
                 )));
