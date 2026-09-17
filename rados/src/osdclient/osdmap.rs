@@ -2892,13 +2892,10 @@ impl OSDMap {
         }
         let acting_primary = self.primary_temp.get(pg).copied().unwrap_or_else(|| {
             if has_nonempty_temp {
-                return temp_primary.unwrap_or(-1);
+                temp_primary.unwrap_or(-1)
+            } else {
+                up_primary
             }
-            acting
-                .iter()
-                .copied()
-                .find(|&osd| osd != CRUSH_ITEM_NONE)
-                .unwrap_or(up_primary)
         });
         PgPlacement {
             raw,
@@ -3080,15 +3077,13 @@ impl OSDMap {
     /// C++ `OSDMap::_apply_upmap`.
     fn apply_upmap(&self, pg: &PgId, osds: &mut Vec<i32>) {
         if let Some(upmap) = self.pg_upmap.get(pg)
-            && !upmap
-                .iter()
-                .any(|&osd| osd != CRUSH_ITEM_NONE && self.is_out(osd))
+            && !upmap.iter().any(|&osd| self.upmap_target_is_out(osd))
         {
             *osds = upmap.clone();
         }
         if let Some(items) = self.pg_upmap_items.get(pg) {
             for &(from, to) in items {
-                if osds.contains(&to) || (to != CRUSH_ITEM_NONE && self.is_out(to)) {
+                if osds.contains(&to) || self.upmap_target_is_out(to) {
                     continue;
                 }
                 if let Some(pos) = osds.iter().position(|&osd| osd == from) {
@@ -3098,11 +3093,20 @@ impl OSDMap {
         }
         if let Some(&primary) = self.pg_upmap_primaries.get(pg)
             && primary != CRUSH_ITEM_NONE
-            && !self.is_out(primary)
+            && primary >= 0
+            && primary < self.max_osd
+            && self.osd_weight.get(primary as usize).copied().unwrap_or(0) != 0
             && let Some(pos) = osds.iter().skip(1).position(|&osd| osd == primary)
         {
             osds.swap(0, pos + 1);
         }
+    }
+
+    fn upmap_target_is_out(&self, osd: i32) -> bool {
+        osd != CRUSH_ITEM_NONE
+            && osd >= 0
+            && osd < self.max_osd
+            && self.osd_weight.get(osd as usize).copied() == Some(0)
     }
 
     pub fn new() -> Self {
@@ -3911,6 +3915,247 @@ mod tests {
         let placement = map.pg_to_placement(&pg).unwrap();
         assert_eq!(placement.acting, vec![CRUSH_ITEM_NONE; 6]);
         assert_eq!(placement.acting_primary, -1);
+    }
+
+    fn source_affinity_counts(map: &OSDMap, pool: u64) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+        let mut any = vec![0; 6];
+        let mut first = vec![0; 6];
+        let mut primary = vec![0; 6];
+        for seed in 0..10_000 {
+            let pg = PgId::new(pool, seed);
+            let placement = map.pg_to_placement(&pg).unwrap();
+            for &osd in &placement.acting {
+                if osd >= 0 && osd < 6 {
+                    any[osd as usize] += 1;
+                }
+            }
+            if let Some(&osd) = placement.acting.first()
+                && osd >= 0
+                && osd < 6
+            {
+                first[osd as usize] += 1;
+            }
+            if placement.acting_primary >= 0 && placement.acting_primary < 6 {
+                primary[placement.acting_primary as usize] += 1;
+            }
+        }
+        (any, first, primary)
+    }
+
+    // Upstream: v17.2.7/src/test/osd/TestOSDMap.cc::OSDMapTest.PrimaryAffinity
+    // Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/osd/TestOSDMap.cc#L462
+    // Upstream: v20.2.4/src/test/osd/TestOSDMap.cc::OSDMapTest.PrimaryAffinity
+    // Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/osd/TestOSDMap.cc#L703
+    #[test]
+    fn primary_affinity_ports_all_source_states_for_both_pools() {
+        let mut map = source_six_osd_map();
+        for pool in [1, 2] {
+            let (any, first, primary) = source_affinity_counts(&map, pool);
+            for osd in 0..6 {
+                assert!(any[osd] > 0, "pool {pool}, osd {osd}");
+                assert!(first[osd] > 0, "pool {pool}, osd {osd}");
+                assert!(primary[osd] > 0, "pool {pool}, osd {osd}");
+            }
+
+            let mut zero = OSDMapIncremental::new(Epoch::new(map.epoch.as_u32() + 1));
+            zero.new_primary_affinity.insert(0, 0);
+            zero.new_primary_affinity.insert(1, 0);
+            zero.apply_to(&mut map).unwrap();
+            let (any, first, primary) = source_affinity_counts(&map, pool);
+            for osd in 0..6 {
+                assert!(any[osd] > 0, "pool {pool}, osd {osd}");
+                if osd >= 2 {
+                    assert!(first[osd] > 0, "pool {pool}, osd {osd}");
+                    assert!(primary[osd] > 0, "pool {pool}, osd {osd}");
+                } else {
+                    if pool == 2 {
+                        assert_eq!(first[osd], 0, "pool {pool}, osd {osd}");
+                    }
+                    assert_eq!(primary[osd], 0, "pool {pool}, osd {osd}");
+                }
+            }
+
+            let mut half = OSDMapIncremental::new(Epoch::new(map.epoch.as_u32() + 1));
+            half.new_primary_affinity.insert(0, 0x8000);
+            half.new_primary_affinity.insert(1, 0);
+            half.apply_to(&mut map).unwrap();
+            let (any, first, primary) = source_affinity_counts(&map, pool);
+            let expected = (10_000 / (6 - 2)) / 2;
+            for osd in 0..6 {
+                assert!(any[osd] > 0, "pool {pool}, osd {osd}");
+                if osd >= 2 {
+                    assert!(first[osd] > 0, "pool {pool}, osd {osd}");
+                    assert!(primary[osd] > 0, "pool {pool}, osd {osd}");
+                } else if osd == 1 {
+                    if pool == 2 {
+                        assert_eq!(first[osd], 0, "pool {pool}, osd {osd}");
+                    }
+                    assert_eq!(primary[osd], 0, "pool {pool}, osd {osd}");
+                } else {
+                    assert!(primary[0] > expected * 2 / 3, "pool {pool}");
+                    assert!(primary[0] < expected * 4 / 3, "pool {pool}");
+                }
+            }
+
+            let mut restore = OSDMapIncremental::new(Epoch::new(map.epoch.as_u32() + 1));
+            restore
+                .new_primary_affinity
+                .insert(0, CEPH_OSD_DEFAULT_PRIMARY_AFFINITY);
+            restore
+                .new_primary_affinity
+                .insert(1, CEPH_OSD_DEFAULT_PRIMARY_AFFINITY);
+            restore.apply_to(&mut map).unwrap();
+        }
+    }
+
+    #[test]
+    fn upmap_replays_source_valid_out_and_invalid_target_transitions() {
+        let pg = PgId::new(2, 0);
+        let mut map = source_six_osd_map();
+        assert_eq!(map.pg_to_placement(&pg).unwrap().raw, vec![3, 5, 1]);
+
+        let mut invalid = OSDMapIncremental::new(Epoch::new(3));
+        invalid.new_pg_upmap.insert(pg, vec![99, 2, 4]);
+        invalid.apply_to(&mut map).unwrap();
+        assert_eq!(map.pg_upmap.get(&pg), Some(&vec![99, 2, 4]));
+        let mut raw = vec![3, 5, 1];
+        map.apply_upmap(&pg, &mut raw);
+        assert_eq!(raw, vec![99, 2, 4]);
+        let placement = map.pg_to_placement(&pg).unwrap();
+        assert_eq!(placement.raw, vec![3, 5, 1]);
+        assert_eq!(placement.up, vec![2, 4]);
+        assert_eq!(placement.acting, vec![2, 4]);
+        assert_eq!(placement.up_primary, 2);
+        assert_eq!(placement.acting_primary, 2);
+
+        let mut remove = OSDMapIncremental::new(Epoch::new(4));
+        remove.old_pg_upmap.push(pg);
+        remove.apply_to(&mut map).unwrap();
+        assert_eq!(map.pg_to_placement(&pg).unwrap().raw, vec![3, 5, 1]);
+
+        let mut out = OSDMapIncremental::new(Epoch::new(5));
+        out.new_weight.insert(4, 0);
+        out.new_pg_upmap.insert(pg, vec![0, 4, 2]);
+        out.apply_to(&mut map).unwrap();
+        let placement = map.pg_to_placement(&pg).unwrap();
+        assert_eq!(placement.raw, vec![3, 5, 1]);
+        assert_eq!(placement.up, vec![3, 5, 1]);
+        assert_eq!(placement.acting, vec![3, 5, 1]);
+        assert_eq!(placement.up_primary, 3);
+        assert_eq!(placement.acting_primary, 3);
+    }
+
+    // Client application of the CleanTemps removal sentinels. The monitor
+    // cleanup producer remains outside this crate.
+    #[test]
+    fn client_replays_temp_removal_sentinels_and_keeps_useful_temps() {
+        let pg = PgId::new(2, 0);
+        let mut map = source_six_osd_map();
+        let mut add = OSDMapIncremental::new(Epoch::new(3));
+        add.new_pg_temp.insert(pg, vec![3, 5, 1]);
+        add.new_primary_temp.insert(pg, 3);
+        add.apply_to(&mut map).unwrap();
+
+        let placement = map.pg_to_placement(&pg).unwrap();
+        assert_eq!(placement.raw, vec![3, 5, 1]);
+        assert_eq!(placement.up, vec![3, 5, 1]);
+        assert_eq!(placement.acting, vec![3, 5, 1]);
+        assert_eq!(placement.up_primary, 3);
+        assert_eq!(placement.acting_primary, 3);
+
+        let mut remove = OSDMapIncremental::new(Epoch::new(4));
+        remove.new_pg_temp.insert(pg, vec![]);
+        remove.new_primary_temp.insert(pg, -1);
+        remove.apply_to(&mut map).unwrap();
+
+        assert!(!map.pg_temp.contains_key(&pg));
+        assert!(!map.primary_temp.contains_key(&pg));
+        assert_eq!(
+            map.pg_to_placement(&pg).unwrap(),
+            PgPlacement {
+                raw: vec![3, 5, 1],
+                up: vec![3, 5, 1],
+                acting: vec![3, 5, 1],
+                up_primary: 3,
+                acting_primary: 3,
+            }
+        );
+
+        let mut useful = OSDMapIncremental::new(Epoch::new(5));
+        useful.new_pg_temp.insert(pg, vec![3, 0, 1]);
+        useful.new_primary_temp.insert(pg, 0);
+        useful.apply_to(&mut map).unwrap();
+        let placement = map.pg_to_placement(&pg).unwrap();
+        assert_eq!(placement.raw, vec![3, 5, 1]);
+        assert_eq!(placement.up, vec![3, 5, 1]);
+        assert_eq!(placement.acting, vec![3, 0, 1]);
+        assert_eq!(placement.up_primary, 3);
+        assert_eq!(placement.acting_primary, 0);
+    }
+
+    // Client-side removal sentinels consumed by CleanPGUpmaps and
+    // CleanPGUpmapPrimaries; their monitor producers are not implemented.
+    #[test]
+    fn client_replays_full_item_and_primary_upmap_removals() {
+        let pg = PgId::new(2, 0);
+        let mut map = source_six_osd_map();
+        let mut add = OSDMapIncremental::new(Epoch::new(3));
+        add.new_pg_upmap.insert(pg, vec![0, 2, 4]);
+        add.new_pg_upmap_items.insert(pg, vec![(2, 1)]);
+        add.new_pg_upmap_primary.insert(pg, 4);
+        add.apply_to(&mut map).unwrap();
+        assert_eq!(
+            map.pg_to_placement(&pg).unwrap(),
+            PgPlacement {
+                raw: vec![3, 5, 1],
+                up: vec![4, 1, 0],
+                acting: vec![4, 1, 0],
+                up_primary: 4,
+                acting_primary: 4,
+            }
+        );
+
+        let mut remove = OSDMapIncremental::new(Epoch::new(4));
+        remove.old_pg_upmap.push(pg);
+        remove.old_pg_upmap_items.push(pg);
+        remove.old_pg_upmap_primary.push(pg);
+        remove.apply_to(&mut map).unwrap();
+        assert_eq!(
+            map.pg_to_placement(&pg).unwrap(),
+            PgPlacement {
+                raw: vec![3, 5, 1],
+                up: vec![3, 5, 1],
+                acting: vec![3, 5, 1],
+                up_primary: 3,
+                acting_primary: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn upmap_items_keep_source_collision_and_negative_target_semantics() {
+        let pg = PgId::new(2, 0);
+        let mut map = source_six_osd_map();
+        let mut items = OSDMapIncremental::new(Epoch::new(3));
+        items
+            .new_pg_upmap_items
+            .insert(pg, vec![(5, 3), (5, 99), (1, -2)]);
+        items.apply_to(&mut map).unwrap();
+
+        let mut raw = vec![3, 5, 1];
+        map.apply_upmap(&pg, &mut raw);
+        assert_eq!(raw, vec![3, 99, -2]);
+        let placement = map.pg_to_placement(&pg).unwrap();
+        assert_eq!(placement.raw, vec![3, 5, 1]);
+        assert_eq!(placement.up, vec![3]);
+        assert_eq!(placement.acting, vec![3]);
+        assert_eq!(placement.up_primary, 3);
+        assert_eq!(placement.acting_primary, 3);
+
+        let mut remove = OSDMapIncremental::new(Epoch::new(4));
+        remove.old_pg_upmap_items.push(pg);
+        remove.apply_to(&mut map).unwrap();
+        assert_eq!(map.pg_to_placement(&pg).unwrap().up, vec![3, 5, 1]);
     }
 
     // Upstream: v20.2.4/src/test/osd/TestOSDMap.cc::OSDMapTest.pgtemp_primaryfirst
