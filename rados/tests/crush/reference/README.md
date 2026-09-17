@@ -137,6 +137,19 @@ python3 rados/tests/crush/reference/generate-device-class-reference.py ../ceph -
 | `device-class-tentacle.crushmap` | `6ba67dfe56744d233a7b8b8b12671adaff002715c0a3eb8a5c9a206b8d4b6fa8` |
 | `device-class-vectors.txt` | `77c06b8a96b7c091e6115633c558b87b39958c8a421226799c5fc8a3066d6e19` |
 
+## Reclassification and monitor-class captures
+
+`generate-reclassify-reference.py ../ceph --check` verifies the unchanged
+`fixtures/reclassify.t` and ten original maps at both pins. Its 880 C digests
+cover ordered before/after mappings for every rule, replicas 1..10 and x=0..1023.
+It preserves `e` 6540/8417, `c` 158/138/0, and `gabe2`/`f` 627/652 movements;
+`gabe` remains the transcript's producer-side failure.
+
+`generate-mon-classes-reference.py --check` uses adjacent self-cleaning
+`live-mon-classes-preflight.sh` to compare fresh pinned-C lifecycle maps and
+240 class-rule vectors. The non-root three-OSD memstore topology leaves no
+persistent cluster state.
+
 ## Choose-argument fixtures
 
 `choose-args-compat-*.crushmap` is produced by each pinned `crushtool` from

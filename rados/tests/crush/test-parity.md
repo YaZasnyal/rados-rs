@@ -141,13 +141,23 @@ This is the continuation order. “Not ported” does not mean unsupported;
 | 3 | Remaining Quincy mapper cases, STRAW zero/perturbed weights, STRAW2 reweight | Passing; five cases reuse their existing NORMAL ports after the raw-123/type-3 proof, and three assertion-bearing weight cases retain original setup/RNG outcome |
 | 3 | Zero/nonpositive rule retry settings | Passing; local C-reference cases retain positive, zero, negative and repeated override semantics for conventional FIRSTN and recursive chooseleaf |
 | 4 | Choose arguments: positional weights/IDs and legacy encoding fallback | Coverage: Ported; Readiness: Ready now; Verification: Passing — 2,100 pinned C vectors cover direct FIRSTN/INDEP, recursive CHOOSELEAF, chained steps, and Tentacle MSR FIRSTN/INDEP with unavailable-device retries. All 16 published QA transition states have decoded canonical/compat fields and 160 ordered C/Rust placement rows; update/no-update pre/remove retain both weight-set positions and IDs at real index 0 without default fallback. CLI indexes 1–6 retain all declared arguments and every bucket's type, size, canonical weights and items. Malformed source-byte mutations assert the bucket/weight/ID guards. Producer APIs remain outside this retained client-observation scope. |
-| 4 | Device-class reclassification mappings | Coverage: Partial; class/shadow fixture decoding, reverse shadow lookup and C-referenced class placement are Ported, Ready now and Passing for both pins. Reclassify before/after map comparisons remain task 6b; class editor/formatter operations remain producer-side adaptations. |
+| 4 | Device-class reclassification mappings | Coverage: Ported; Readiness: Ready now; Verification: Passing. Ten successful original pairs retain every rule's complete before/after C/Rust workload (replicas 1..10, x=0..1023); `gabe` remains a producer-only failure disposition. |
 | 5 | OSDMap raw/up/acting sets, primary/affinity, EC positions and map transitions | Not ported as a complete reference suite; capture original OSDMap setup/deltas |
 | 5 | Original client I/O and pool scenarios on both releases | Not run; requires matching clusters |
 
 Uniform, List and Tree do not yet have complete reference mapping coverage.
 The old corpus integration tests can return successfully without their
 external inputs; they do not count as passing compatibility checks.
+
+## Reclassification and monitor classes — 2026-09-17
+
+Coverage: Ported. Readiness: Ready now. Verification: Passing. Ten successful
+`reclassify.t` pairs retain both pins, every original rule, 10,240 ordered
+mappings per rule on each before/after side, and their original nonzero
+movements. `gabe` is explicitly the producer/editor failure. Captured
+`TEST_mon_classes` states cover removal, retained `asdf`, moved `abc`, and
+`class_1` to `class_2` rename metadata plus C/Rust filtered placement. The
+original `SOMETHING` write remains task9 scope.
 
 CRUSH editor/compiler/formatter and monitor/balancer tests are not native
 client API ports. Their resulting maps and placement effects still need

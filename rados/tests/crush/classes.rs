@@ -2,6 +2,8 @@ use bytes::Bytes;
 use rados::crush::{
     BucketData, CrushError, CrushMap, RuleOp, RuleType, crush_do_rule_with_choose_args,
 };
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 
 const QUINCY: &[u8] = include_bytes!("reference/device-class-quincy.crushmap");
 const TENTACLE: &[u8] = include_bytes!("reference/device-class-tentacle.crushmap");
@@ -26,7 +28,7 @@ fn assert_straw_bucket(
     );
     assert_eq!(bucket.items, items);
     assert!(
-        matches!(&bucket.data, BucketData::Straw { item_weights, .. } if item_weights == weights)
+        matches!(&bucket.data, BucketData::Straw { item_weights, .. } | BucketData::Straw2 { item_weights } if item_weights == weights)
     );
 }
 
@@ -171,4 +173,417 @@ fn device_class_rules_match_pinned_c_vectors_and_membership() {
         }
         assert_eq!(rows, 40);
     }
+}
+
+fn reclassify_map(case: &str, state: &str, release: &str) -> &'static [u8] {
+    macro_rules! maps {
+        ($case:literal) => {
+            match (state, release) {
+                ("before", "quincy") => include_bytes!(concat!(
+                    "reference/reclassify-",
+                    $case,
+                    "-before-quincy.crushmap"
+                )),
+                ("after", "quincy") => include_bytes!(concat!(
+                    "reference/reclassify-",
+                    $case,
+                    "-after-quincy.crushmap"
+                )),
+                ("before", "tentacle") => include_bytes!(concat!(
+                    "reference/reclassify-",
+                    $case,
+                    "-before-tentacle.crushmap"
+                )),
+                ("after", "tentacle") => include_bytes!(concat!(
+                    "reference/reclassify-",
+                    $case,
+                    "-after-tentacle.crushmap"
+                )),
+                _ => unreachable!(),
+            }
+        };
+    }
+    match case {
+        "a" => maps!("a"),
+        "d" => maps!("d"),
+        "e" => maps!("e"),
+        "c" => maps!("c"),
+        "beesly" => maps!("beesly"),
+        "flax" => maps!("flax"),
+        "gabe2" => maps!("gabe2"),
+        "b" => maps!("b"),
+        "f" => maps!("f"),
+        "g" => maps!("g"),
+        _ => unreachable!(),
+    }
+}
+
+fn mapping_digest(map: &CrushMap, rule: u32, replicas: u32) -> (String, Vec<Vec<i32>>) {
+    let mut digest = Sha256::new();
+    let mut rows = Vec::new();
+    let weights = vec![65536; map.max_devices as usize];
+    for x in 0..1024 {
+        let mut actual = Vec::new();
+        crush_do_rule_with_choose_args(map, rule, x, &mut actual, replicas as usize, &weights, -1)
+            .unwrap();
+        digest.update((actual.len() as u32).to_be_bytes());
+        for item in &actual {
+            digest.update(item.to_be_bytes());
+        }
+        rows.push(actual);
+    }
+    (format!("{:x}", digest.finalize()), rows)
+}
+
+#[test]
+fn reclassify_before_after_maps_match_pinned_c_complete_workload() {
+    // Upstream: v17.2.7/src/test/cli/crushtool/reclassify.t::locally assigned successful pairs cmd-01/02,03/04,05/06,07/08,09/10,11/12,14/15,16/17,18/19,20/21
+    // Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/reclassify.t#L1
+    // Upstream: v20.2.4/src/test/cli/crushtool/reclassify.t::locally assigned successful pairs cmd-01/02,03/04,05/06,07/08,09/10,11/12,14/15,16/17,18/19,20/21
+    // Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/reclassify.t#L1
+    let cases: &[(&str, &[u32], &[usize])] = &[
+        ("a", &[0, 1], &[0, 0]),
+        ("d", &[0, 1], &[0, 0]),
+        ("e", &[0, 1], &[6540, 8417]),
+        ("c", &[0, 1, 2], &[158, 138, 0]),
+        ("beesly", &[0, 1, 2, 4], &[0, 0, 0, 0]),
+        ("flax", &[0], &[0]),
+        ("gabe2", &[0, 1], &[627, 652]),
+        ("b", &[0, 1], &[0, 0]),
+        ("f", &[0, 1], &[627, 652]),
+        ("g", &[0, 1], &[0, 0]),
+    ];
+    let vectors: HashMap<_, _> = include_str!("reference/reclassify-vectors.txt")
+        .lines()
+        .map(|line| {
+            let fields: Vec<_> = line.split_whitespace().collect();
+            assert_eq!(fields.len(), 7, "{line}");
+            (
+                (
+                    fields[0],
+                    fields[1],
+                    fields[2],
+                    fields[3].parse::<u32>().unwrap(),
+                    fields[4].parse::<u32>().unwrap(),
+                ),
+                (fields[5].parse::<usize>().unwrap(), fields[6]),
+            )
+        })
+        .collect();
+    assert_eq!(vectors.len(), 880);
+    for release in ["quincy", "tentacle"] {
+        for &(case, rules, mismatches) in cases {
+            for (rule, expected_mismatches) in rules.iter().zip(mismatches) {
+                let mut states = HashMap::new();
+                for state in ["before", "after"] {
+                    let map = decode(reclassify_map(case, state, release));
+                    let mut complete = Vec::new();
+                    for replicas in 1..=10 {
+                        let (actual, rows) = mapping_digest(&map, *rule, replicas);
+                        let &(count, expected) = vectors
+                            .get(&(release, case, state, *rule, replicas))
+                            .unwrap_or_else(|| {
+                                panic!("missing {release} {case} {state} {rule} {replicas}")
+                            });
+                        assert_eq!(count, rows.len());
+                        assert_eq!(
+                            actual, expected,
+                            "{release} {case} {state} rule={rule} replicas={replicas}"
+                        );
+                        complete.extend(rows);
+                    }
+                    assert_eq!(complete.len(), 10240);
+                    states.insert(state, complete);
+                }
+                assert_eq!(
+                    states["before"]
+                        .iter()
+                        .zip(&states["after"])
+                        .filter(|(before, after)| before != after)
+                        .count(),
+                    *expected_mismatches,
+                    "{release} {case} rule={rule}"
+                );
+            }
+        }
+    }
+}
+
+fn mon_classes_map(state: &str, release: &str) -> &'static [u8] {
+    match (state, release) {
+        ("removed", "quincy") => include_bytes!("reference/mon-classes-removed-quincy.crushmap"),
+        ("asdf", "quincy") => include_bytes!("reference/mon-classes-asdf-quincy.crushmap"),
+        ("abc", "quincy") => include_bytes!("reference/mon-classes-abc-quincy.crushmap"),
+        ("class2", "quincy") => include_bytes!("reference/mon-classes-class2-quincy.crushmap"),
+        ("removed", "tentacle") => {
+            include_bytes!("reference/mon-classes-removed-tentacle.crushmap")
+        }
+        ("asdf", "tentacle") => include_bytes!("reference/mon-classes-asdf-tentacle.crushmap"),
+        ("abc", "tentacle") => include_bytes!("reference/mon-classes-abc-tentacle.crushmap"),
+        ("class2", "tentacle") => include_bytes!("reference/mon-classes-class2-tentacle.crushmap"),
+        _ => unreachable!(),
+    }
+}
+
+fn assert_class_rule(map: &CrushMap, rule: u32, name: &str, take: i32) {
+    let rule = map.get_rule(rule).unwrap();
+    assert_eq!(
+        map.rule_names.get(&rule.rule_id).map(String::as_str),
+        Some(name)
+    );
+    assert_eq!(rule.rule_type, RuleType::Replicated);
+    assert_eq!(rule.steps.len(), 3);
+    assert_eq!((rule.steps[0].op, rule.steps[0].arg1), (RuleOp::Take, take));
+    assert_eq!(
+        (rule.steps[1].op, rule.steps[1].arg1, rule.steps[1].arg2),
+        (RuleOp::ChooseLeafFirstN, 0, 1)
+    );
+    assert_eq!(rule.steps[2].op, RuleOp::Emit);
+}
+
+fn assert_complete_class_map(map: &CrushMap, devices: &[(i32, i32)]) {
+    let expected = map
+        .class_bucket
+        .values()
+        .flat_map(|shadows| shadows.iter().map(|(&class, &shadow)| (shadow, class)))
+        .chain(devices.iter().copied())
+        .collect();
+    assert_eq!(map.class_map, expected);
+    for (&base, shadows) in &map.class_bucket {
+        for (&class, &shadow) in shadows {
+            assert_eq!(map.split_id_class(shadow).unwrap(), (base, Some(class)));
+            assert_eq!(
+                map.names.get(&shadow),
+                Some(&format!("{}~{}", map.names[&base], map.class_name[&class]))
+            );
+        }
+    }
+}
+
+#[test]
+fn mon_classes_retained_maps_keep_lifecycle_metadata_and_filtered_placements() {
+    // Upstream: v17.2.7/qa/standalone/crush/crush-classes.sh::TEST_mon_classes
+    // Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/qa/standalone/crush/crush-classes.sh#L166
+    // Upstream: v20.2.4/qa/standalone/crush/crush-classes.sh::TEST_mon_classes
+    // Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/qa/standalone/crush/crush-classes.sh#L166
+    for release in ["quincy", "tentacle"] {
+        let removed = decode(mon_classes_map("removed", release));
+        assert!(
+            removed.class_name.is_empty()
+                && removed.class_map.is_empty()
+                && removed.class_bucket.is_empty()
+        );
+        assert!(removed.choose_args.is_empty());
+        let default_rule = removed.get_rule(0).unwrap();
+        assert_eq!(
+            removed.rule_names.get(&0).map(String::as_str),
+            Some("replicated_rule")
+        );
+        assert_eq!(default_rule.rule_type, RuleType::Replicated);
+        assert_eq!(default_rule.steps.len(), 3);
+        assert_eq!(
+            (default_rule.steps[0].op, default_rule.steps[0].arg1),
+            (RuleOp::Take, -1)
+        );
+        assert_eq!(
+            (
+                default_rule.steps[1].op,
+                default_rule.steps[1].arg1,
+                default_rule.steps[1].arg2
+            ),
+            (RuleOp::ChooseFirstN, 0, 0)
+        );
+        assert_eq!(default_rule.steps[2].op, RuleOp::Emit);
+
+        let asdf = decode(mon_classes_map("asdf", release));
+        assert_eq!(
+            asdf.class_name,
+            [(0, "asdf".to_string())].into_iter().collect()
+        );
+        assert_eq!(asdf.class_map, [(-3, 0), (-4, 0)].into_iter().collect());
+        assert_eq!(
+            asdf.class_bucket,
+            [
+                (-2, [(0, -3)].into_iter().collect()),
+                (-1, [(0, -4)].into_iter().collect())
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert_eq!(asdf.names.get(&-3).map(String::as_str), Some("colima~asdf"));
+        assert_eq!(
+            asdf.names.get(&-4).map(String::as_str),
+            Some("default~asdf")
+        );
+        assert_straw_bucket(&asdf, -3, 1, 0, &[], &[]);
+        assert_straw_bucket(&asdf, -4, 11, 0, &[-3], &[0]);
+        assert_complete_class_map(&asdf, &[]);
+        assert!(asdf.choose_args.is_empty());
+        assert_class_rule(&asdf, 1, "asdf-rule", -4);
+
+        let abc = decode(mon_classes_map("abc", release));
+        assert_eq!(
+            abc.class_name,
+            [
+                (0, "asdf".to_string()),
+                (1, "abc".to_string()),
+                (2, "hdd".to_string())
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert_eq!(abc.get_device_class(0), Some("hdd"));
+        assert_eq!(abc.get_device_class(1), None);
+        assert_eq!(abc.get_device_class(2), Some("abc"));
+        assert_eq!(abc.class_bucket.len(), 5);
+        for (base, shadows) in [
+            (-1, [(0, -4), (1, -15), (2, -20)]),
+            (-2, [(0, -3), (1, -14), (2, -19)]),
+            (-7, [(0, -10), (1, -5), (2, -16)]),
+            (-8, [(0, -11), (1, -6), (2, -17)]),
+            (-9, [(0, -12), (1, -13), (2, -18)]),
+        ] {
+            assert_eq!(
+                abc.class_bucket.get(&base),
+                Some(&shadows.into_iter().collect())
+            );
+        }
+        for (id, name) in [
+            (-5, "foo-host~abc"),
+            (-6, "foo-rack~abc"),
+            (-13, "foo~abc"),
+            (-15, "default~abc"),
+            (-20, "default~hdd"),
+        ] {
+            assert_eq!(abc.names.get(&id).map(String::as_str), Some(name));
+        }
+        assert_straw_bucket(&abc, -5, 1, 65, &[2], &[65]);
+        assert_straw_bucket(&abc, -6, 3, 65, &[-5], &[65]);
+        assert_straw_bucket(&abc, -13, 11, 65, &[-6], &[65]);
+        for (id, weight, items, weights) in [
+            (-3, 0, &[][..], &[][..]),
+            (-4, 0, &[-3][..], &[0][..]),
+            (-5, 65, &[2][..], &[65][..]),
+            (-6, 65, &[-5][..], &[65][..]),
+            (-10, 0, &[][..], &[][..]),
+            (-11, 0, &[-10][..], &[0][..]),
+            (-12, 0, &[-11][..], &[0][..]),
+            (-13, 65, &[-6][..], &[65][..]),
+            (-14, 0, &[][..], &[][..]),
+            (-15, 0, &[-14][..], &[0][..]),
+            (-16, 0, &[][..], &[][..]),
+            (-17, 0, &[-16][..], &[0][..]),
+            (-18, 0, &[-17][..], &[0][..]),
+            (-19, 65, &[0][..], &[65][..]),
+            (-20, 65, &[-19][..], &[65][..]),
+        ] {
+            let bucket = abc.get_bucket(id).unwrap();
+            assert_eq!(bucket.weight, weight);
+            assert_eq!(bucket.items, items);
+            assert!(
+                matches!(&bucket.data, BucketData::Straw2 { item_weights } if item_weights == weights)
+            );
+        }
+        assert_complete_class_map(&abc, &[(0, 2), (2, 1)]);
+        assert!(abc.choose_args.is_empty());
+        assert_class_rule(&abc, 1, "asdf-rule", -4);
+        assert_class_rule(&abc, 2, "foo-rule", -13);
+
+        let class2 = decode(mon_classes_map("class2", release));
+        assert_eq!(
+            class2.class_name,
+            [
+                (0, "asdf".to_string()),
+                (1, "abc".to_string()),
+                (2, "class_2".to_string())
+            ]
+            .into_iter()
+            .collect()
+        );
+        assert_eq!(
+            (
+                class2.get_device_class(0),
+                class2.get_device_class(1),
+                class2.get_device_class(2)
+            ),
+            (Some("class_2"), Some("class_2"), Some("class_2"))
+        );
+        assert_eq!(class2.class_bucket, abc.class_bucket);
+        for (id, name) in [
+            (-16, "foo-host~class_2"),
+            (-17, "foo-rack~class_2"),
+            (-18, "foo~class_2"),
+            (-20, "default~class_2"),
+        ] {
+            assert_eq!(class2.names.get(&id).map(String::as_str), Some(name));
+        }
+        assert_straw_bucket(&class2, -16, 1, 65, &[2], &[65]);
+        assert_straw_bucket(&class2, -17, 3, 65, &[-16], &[65]);
+        assert_straw_bucket(&class2, -18, 11, 65, &[-17], &[65]);
+        assert_straw_bucket(&class2, -19, 1, 130, &[0, 1], &[65, 65]);
+        assert_straw_bucket(&class2, -20, 11, 130, &[-19], &[130]);
+        for (id, weight) in [
+            (-3, 0),
+            (-4, 0),
+            (-5, 0),
+            (-6, 0),
+            (-10, 0),
+            (-11, 0),
+            (-12, 0),
+            (-13, 0),
+            (-14, 0),
+            (-15, 0),
+            (-16, 65),
+            (-17, 65),
+            (-18, 65),
+            (-19, 130),
+            (-20, 130),
+        ] {
+            assert_eq!(class2.get_bucket(id).unwrap().weight, weight);
+        }
+        assert_complete_class_map(&class2, &[(0, 2), (1, 2), (2, 2)]);
+        assert!(class2.choose_args.is_empty());
+        assert_class_rule(&class2, 1, "asdf-rule", -4);
+        assert_class_rule(&class2, 2, "foo-rule", -13);
+        assert_class_rule(&class2, 3, "class_1_rule", -20);
+    }
+
+    let mut rows = 0;
+    for line in include_str!("reference/mon-classes-vectors.txt").lines() {
+        let (prefix, values) = line.split_once(" [").unwrap();
+        let fields: Vec<_> = prefix.split_whitespace().collect();
+        let release = fields[0];
+        let state = fields[1];
+        let rule = fields[2].parse().unwrap();
+        let x = fields[3].parse().unwrap();
+        let expected = values
+            .trim_end_matches(']')
+            .split_whitespace()
+            .map(str::parse)
+            .collect::<Result<Vec<i32>, _>>()
+            .unwrap();
+        let map = decode(mon_classes_map(state, release));
+        let mut actual = Vec::new();
+        crush_do_rule_with_choose_args(
+            &map,
+            rule,
+            x,
+            &mut actual,
+            3,
+            &vec![65536; map.max_devices as usize],
+            -1,
+        )
+        .unwrap();
+        assert_eq!(actual, expected, "{release} {state} rule={rule} x={x}");
+        let (_, Some(class)) = map
+            .split_id_class(map.get_rule(rule).unwrap().steps[0].arg1)
+            .unwrap()
+        else {
+            panic!("class rule {rule}")
+        };
+        let class = map.class_name.get(&class).unwrap();
+        assert!(actual.iter().all(|&id| map.device_has_class(id, class)));
+        rows += 1;
+    }
+    assert_eq!(rows, 240);
 }

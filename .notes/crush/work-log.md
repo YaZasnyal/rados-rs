@@ -434,3 +434,12 @@ consumer behavior in the pinned `CrushWrapperTest.split_id_class` without
 porting class creation, cloning, trimming or reclassification editors. Those
 producer operations and the reclassify before/after mapping pairs remain task
 6b scope.
+
+## Reclassification and monitor-class consumers — 2026-09-17
+
+Task 6b captures all ten successful original reclassification pairs for both
+pinned releases. Ordered C digests cover every rule, before/after map,
+replicas 1..10 and x=0..1023; original nonzero mismatches remain visible.
+`gabe` remains producer-only. Captured `TEST_mon_classes` maps cover
+individual removals, retained `asdf`, moved `abc`, and renamed `class_2`,
+with C/Rust filtered placements. The original live write remains task9 scope.
