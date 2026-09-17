@@ -66,7 +66,9 @@ and legacy tunables. Pinned C builders verify the equal-weight STRAW lengths;
 both C mappers agree with the original expected vectors. No production change
 was needed. The overall CLI scenario has Coverage: Partial: compilation,
 temporary-file cleanup and console formatting are outside the client API;
-binary-map decoding remains unverified until a pinned crushtool is available.
+binary-map decoding remains unverified by the Rust suite. Pinned ARM64
+crushtool containers are now available; setup and smoke-check results are in
+[reference/README.md](reference/README.md#pinned-crushtool-containers).
 Names are omitted from the assembled map because neither rule uses name lookup.
 Disposition review: Pending.
 

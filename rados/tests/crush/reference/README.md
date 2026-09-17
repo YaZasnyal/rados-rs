@@ -37,6 +37,38 @@ Cargo tests do not execute these helpers; they embed the generated
 upstream maps and transcripts live in [fixtures](../fixtures); investigation
 notes live in [.notes/crush](../../../../.notes/crush).
 
+## Pinned crushtool containers
+
+For reference compilation on an ARM64 host, use these official Ceph images
+by platform-specific digest. Docker (Colima on macOS) is sufficient; no Ceph
+cluster is required. Downloading requires network access; the tool runs offline.
+
+| Release | Expected source commit | Linux ARM64 image digest |
+| --- | --- | --- |
+| Quincy v17.2.7 | `b12291d110049b2f35e32e0de30d70e9a4c060d2` | `sha256:a70ccb2d8a0e814aa1c009e7541289b99bf039521727b6f44611499e9ca3fada` |
+| Tentacle v20.2.4 | `7f793731f1b39eb4f465e960113d2363c311b964` | `sha256:6e6bc7b28fa1b334108a3646af5533dfb50db508efdf5b358eb7dd0dd37a48aa` |
+
+```sh
+quincy_image=quay.io/ceph/ceph@sha256:a70ccb2d8a0e814aa1c009e7541289b99bf039521727b6f44611499e9ca3fada
+tentacle_image=quay.io/ceph/ceph@sha256:6e6bc7b28fa1b334108a3646af5533dfb50db508efdf5b358eb7dd0dd37a48aa
+docker pull --platform linux/arm64 "$quincy_image"
+docker pull --platform linux/arm64 "$tentacle_image"
+docker run --rm --network none --entrypoint /bin/sh "$quincy_image" -ec 'ceph --version; rpm -qf /usr/bin/crushtool /usr/bin/ceph'
+docker run --rm --network none --entrypoint /bin/sh "$tentacle_image" -ec 'ceph --version; rpm -qf /usr/bin/crushtool /usr/bin/ceph'
+```
+
+`crushtool` does not support `--version`; use `ceph --version` for the source
+commit and check the owning packages for both tools. Verified on 2026-09-17:
+Quincy uses `ceph-base`/`ceph-common` version `17.2.7-0.el8.aarch64`, Tentacle
+uses `20.2.4-0.el9.aarch64`, and both source commits match the table.
+Both tools compiled the original `bad-mappings.crushmap.txt` and reproduced
+both `bad-mappings.t` vectors exactly, with networking disabled. Those smoke
+checks used temporary container files and did not add generated fixtures.
+
+Keep locally compiled maps and other generated data in `reference/`, with
+the command, source inputs, tool version and SHA256;
+`fixtures/` is reserved for unmodified files copied from upstream.
+
 ## Generated mapper regressions
 
 [`mapper-regressions.c`](mapper-regressions.c) is a local input generator,
