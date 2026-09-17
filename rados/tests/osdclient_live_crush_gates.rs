@@ -41,10 +41,22 @@ async fn write(client: &rados::Client, object: &str) {
     .expect("write_full");
 }
 
-// Upstream: v17.2.7/qa/standalone/crush/crush-classes.sh::TEST_classes and
-// TEST_set_device_class; identical at v20.2.4.
-// Upstream: v17.2.7/src/test/librados/pool.cc::LibRadosPools.PoolCreateWithCrushRule;
-// identical at v20.2.4.
+// Upstream: v17.2.7/qa/standalone/crush/crush-classes.sh::TEST_classes
+// Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/qa/standalone/crush/crush-classes.sh#L88-L139
+// Upstream: v20.2.4/qa/standalone/crush/crush-classes.sh::TEST_classes
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/qa/standalone/crush/crush-classes.sh#L88-L139
+// Upstream: v17.2.7/qa/standalone/crush/crush-classes.sh::TEST_set_device_class
+// Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/qa/standalone/crush/crush-classes.sh#L141-L164
+// Upstream: v20.2.4/qa/standalone/crush/crush-classes.sh::TEST_set_device_class
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/qa/standalone/crush/crush-classes.sh#L141-L164
+// Upstream: v17.2.7/src/test/librados/pool.cc::LibRadosPools.PoolCreateWithCrushRule
+// Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/librados/pool.cc#L124-L135
+// Helper: v17.2.7/src/test/librados/test.cc::create_one_pool
+// Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/librados/test.cc#L21-L48
+// Upstream: v20.2.4/src/test/librados/pool.cc::LibRadosPools.PoolCreateWithCrushRule
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/librados/pool.cc#L125-L136
+// Helper: v20.2.4/src/test/librados/test.cc::create_one_pool
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/librados/test.cc#L21-L48
 #[tokio::test]
 #[ignore]
 async fn test_original_crush_class_and_pool_rule_gates() {

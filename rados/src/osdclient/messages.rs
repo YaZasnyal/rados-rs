@@ -760,6 +760,10 @@ mod tests {
     }
 
     #[test]
+    // Rust contract: no upstream boundary regression test found. These cases
+    // exercise the selected MOSDOp encoding branches directly.
+    // Quincy source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/messages/MOSDOp.h#L363-L393
+    // Tentacle source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/messages/MOSDOp.h#L367-L427
     fn test_mosdop_squid_version_requires_complete_feature_mask() {
         use crate::denc::features::CephFeatures;
         use crate::msgr2::ceph_message::{CephMessage, CephMessagePayload, CrcFlags};
