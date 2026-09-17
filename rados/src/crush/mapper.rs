@@ -1,7 +1,7 @@
 // CRUSH rule execution engine
 // Reference: ~/dev/ceph/src/crush/mapper.c
 
-use crate::crush::bucket::bucket_choose;
+use crate::crush::bucket::{bucket_choose, bucket_perm_choose};
 use crate::crush::error::Result;
 use crate::crush::hash::crush_hash32_2;
 use crate::crush::types::{CrushMap, RuleOp};
@@ -111,21 +111,37 @@ pub fn crush_do_rule(
                 let numrep = calculate_numrep(step.arg1, result_max);
                 let item_type = step.arg2;
 
+                let recurse_tries = if map.chooseleaf_descend_once != 0 {
+                    1
+                } else {
+                    choose_tries
+                };
                 scratch.clear();
+                let mut domains = vec![CRUSH_ITEM_NONE; result_max];
+                let mut leaves = vec![CRUSH_ITEM_NONE; result_max];
                 for &item in &work {
-                    crush_choose_firstn(
+                    if item >= 0 || numrep == 0 {
+                        continue;
+                    }
+                    let remaining = result_max - scratch.len();
+                    let count = crush_choose_firstn(
                         map,
                         item,
                         x,
                         numrep,
                         item_type,
-                        &mut scratch,
+                        &mut domains[..remaining],
+                        0,
                         weights,
                         choose_tries,
-                        recurse_to_leaf,
+                        recurse_tries,
                         chooseleaf_vary_r,
                         chooseleaf_stable,
+                        recurse_to_leaf.then_some(&mut leaves[..remaining]),
+                        0,
                     )?;
+                    let selected = if recurse_to_leaf { &leaves } else { &domains };
+                    scratch.extend_from_slice(&selected[..count]);
                 }
                 std::mem::swap(&mut work, &mut scratch);
             }
@@ -205,10 +221,10 @@ pub fn crush_do_rule(
     Ok(())
 }
 
-/// Choose N items using FIRSTN algorithm
-///
-/// This is the core CRUSH selection algorithm that recursively descends
-/// through the bucket hierarchy to select items.
+/// Choose failure domains with FIRSTN, optionally selecting a leaf in each.
+/// `out` retains domains for collision checks; `leaves` retains the OSDs.
+/// The returned position includes any prefix supplied by a recursive call.
+/// Reference: src/crush/mapper.c::crush_choose_firstn, v17.2.7 and v20.2.4.
 #[allow(clippy::too_many_arguments)]
 fn crush_choose_firstn(
     map: &CrushMap,
@@ -216,141 +232,120 @@ fn crush_choose_firstn(
     x: u32,
     numrep: usize,
     item_type: i32,
-    out: &mut Vec<i32>,
+    out: &mut [i32],
+    mut outpos: usize,
     weights: &[u32],
     tries: u32,
-    recurse_to_leaf: bool,
+    recurse_tries: u32,
     vary_r: u8,
     stable: u8,
-) -> Result<()> {
-    tracing::debug!(
-        "crush_choose_firstn: bucket_id={}, numrep={}, item_type={}, recurse_to_leaf={}",
-        bucket_id,
-        numrep,
-        item_type,
-        recurse_to_leaf
-    );
-
-    if bucket_id >= 0 {
-        if item_type == 0 && !is_out(weights, bucket_id, x) {
-            out.push(bucket_id);
-        }
-        return Ok(());
-    }
-
+    mut leaves: Option<&mut [i32]>,
+    parent_r: u32,
+) -> Result<usize> {
     let bucket = map.get_bucket(bucket_id)?;
-    tracing::debug!(
-        "Got bucket: id={}, type={}, size={}, items={:?}",
-        bucket.id,
-        bucket.bucket_type,
-        bucket.size,
-        bucket.items
-    );
-
-    for rep in 0..numrep {
-        let mut found = false;
-        let r = if stable != 0 { 0 } else { rep as u32 };
-        let mut current_bucket;
-
-        tracing::trace!("=== crush_choose_firstn rep={} START ===", rep);
-        tracing::trace!(
-            "  bucket_id={}, x={}, numrep={}, item_type={}",
-            bucket_id,
-            x,
-            numrep,
-            item_type
-        );
-
-        'tries: for ftotal in 0..tries {
-            current_bucket = bucket; // reset to starting bucket each retry (C++ `in = bucket`)
-            let r_prime = if vary_r != 0 { r + ftotal } else { r };
-
-            tracing::trace!(
-                "  rep={}: r_prime = r({}) + ftotal({}) = {}, vary_r={}",
-                rep,
-                r,
-                ftotal,
-                r_prime,
-                vary_r
-            );
-
-            loop {
-                let item = bucket_choose(current_bucket, x, r_prime);
-
-                tracing::debug!(
-                    "Selected item {} from bucket {} (rep={}, try={})",
-                    item,
-                    current_bucket.id,
-                    rep,
-                    ftotal
-                );
-
-                let Some(itemtype) = get_item_type(map, item) else {
-                    tracing::debug!("Invalid bucket {}", item);
-                    continue 'tries;
+    let first_rep = if stable != 0 { 0 } else { outpos };
+    'replicas: for rep in first_rep..numrep {
+        if outpos == out.len() {
+            break;
+        }
+        let mut current_bucket = bucket;
+        let mut total_failures = 0u32;
+        let mut local_failures = 0u32;
+        loop {
+            // Retries always change r. vary_r only controls the recursive seed.
+            let r = (rep as u32)
+                .wrapping_add(parent_r)
+                .wrapping_add(total_failures);
+            let mut collide = false;
+            if current_bucket.size != 0 {
+                let item = if map.choose_local_fallback_tries > 0
+                    && local_failures >= current_bucket.size / 2
+                    && local_failures > map.choose_local_fallback_tries
+                {
+                    bucket_perm_choose(current_bucket, x, r)
+                } else {
+                    bucket_choose(current_bucket, x, r)
                 };
-
-                tracing::debug!(
-                    "Item {} has type {}, looking for type {}",
-                    item,
-                    itemtype,
-                    item_type
-                );
-
-                if itemtype != item_type {
+                if item >= map.max_devices {
+                    continue 'replicas;
+                }
+                let Some(selected_type) = get_item_type(map, item) else {
+                    continue 'replicas;
+                };
+                if selected_type != item_type {
                     if item >= 0 {
-                        tracing::debug!("Device {} has wrong type", item);
-                        continue 'tries;
+                        continue 'replicas;
                     }
                     current_bucket = map.get_bucket(item)?;
-                    tracing::debug!("Descending into bucket {}", item);
                     continue;
                 }
 
-                if out.contains(&item) {
-                    tracing::debug!("Item {} already in output, skipping", item);
-                    continue 'tries;
-                }
-
-                if item >= 0 && is_out(weights, item, x) {
-                    tracing::debug!("Device {} is out", item);
-                    continue 'tries;
-                }
-
-                if recurse_to_leaf && item < 0 {
-                    let before_len = out.len();
-                    crush_choose_firstn(
-                        map, item, x, 1, 0, // Type 0 = device
-                        out, weights, tries, true, vary_r, stable,
-                    )?;
-
-                    if out.len() > before_len {
-                        found = true;
-                        break 'tries;
+                collide = out[..outpos].contains(&item);
+                let mut reject = false;
+                if !collide && let Some(leaf_out) = leaves.as_deref_mut() {
+                    if item < 0 {
+                        let sub_r = if vary_r == 0 {
+                            0
+                        } else {
+                            r.checked_shr(u32::from(vary_r) - 1).unwrap_or(0)
+                        };
+                        let end = crush_choose_firstn(
+                            map,
+                            item,
+                            x,
+                            if stable != 0 { 1 } else { outpos + 1 },
+                            0,
+                            leaf_out,
+                            outpos,
+                            weights,
+                            recurse_tries,
+                            0,
+                            vary_r,
+                            stable,
+                            None,
+                            sub_r,
+                        )?;
+                        reject = end == outpos;
                     } else {
-                        tracing::debug!("Failed to find leaf in bucket {}", item);
-                        continue 'tries;
+                        leaf_out[outpos] = item;
                     }
                 }
-
-                tracing::debug!("Found valid item {}", item);
-                tracing::trace!("crush_choose_firstn: rep={}, item={} SELECTED", rep, item);
-                out.push(item);
-                found = true;
-                break 'tries;
+                if !reject && !collide && item >= 0 {
+                    reject = is_out(weights, item, x);
+                }
+                if !reject && !collide {
+                    tracing::trace!(
+                        bucket_id,
+                        x,
+                        rep,
+                        item,
+                        total_failures,
+                        "CRUSH FIRSTN selected item"
+                    );
+                    out[outpos] = item;
+                    outpos += 1;
+                    continue 'replicas;
+                }
             }
-        }
 
-        if !found {
-            tracing::debug!(
-                "Failed to find item for replica {} after {} tries",
-                rep,
-                tries
-            );
+            total_failures += 1;
+            local_failures += 1;
+            if (collide && local_failures <= map.choose_local_tries)
+                || (map.choose_local_fallback_tries > 0
+                    && local_failures <= current_bucket.size + map.choose_local_fallback_tries)
+            {
+                // A local retry stays in the bucket where the collision occurred.
+                continue;
+            }
+            if total_failures >= tries {
+                continue 'replicas;
+            }
+            // A descent retry starts again at the original failure domain.
+            current_bucket = bucket;
+            local_failures = 0;
         }
     }
-
-    Ok(())
+    Ok(outpos)
 }
 
 /// Choose N items using INDEP (independent) algorithm
@@ -747,17 +742,16 @@ mod tests {
 
         map.buckets = vec![Some(bucket)];
 
-        let mut out = Vec::new();
+        let mut out = vec![CRUSH_ITEM_NONE; 2];
         let weights = vec![0x10000, 0x10000, 0x10000];
+        let count = crush_choose_firstn(
+            &map, -1, 123, 2, 0, &mut out, 0, &weights, 50, 50, 0, 0, None, 0,
+        )
+        .unwrap();
+        out.truncate(count);
 
-        let res = crush_choose_firstn(&map, -1, 123, 2, 0, &mut out, &weights, 50, false, 0, 0);
-
-        assert!(res.is_ok());
-        assert!(out.len() <= 2);
-        // Should have selected distinct items
-        if out.len() == 2 {
-            assert_ne!(out[0], out[1]);
-        }
+        assert_eq!(out.len(), 2);
+        assert_ne!(out[0], out[1]);
     }
 
     #[test]

@@ -19,9 +19,9 @@ ordered vectors (including short results and NONE slots) and result-size
 histograms. Console formatting and the map-modified advisory are CLI-only
 and are not asserted. The helper checks the complete seed sequence and
 sample count and internal histogram consistency before invoking the mapper,
-so an early mapper failure cannot hide incomplete fixture data. The tests
-currently fail on implementation mismatches; see the
-[execution report](../../../../docs/crush-test-parity.md#stage-1-execution).
+so an early mapper failure cannot hide incomplete fixture data. See the
+[execution report](../test-parity.md#stage-2-mapper-fixes) for the original
+failures, mapper corrections and passing results.
 
 Provenance: paths in the table are relative to `src/test/cli/crushtool/`;
 links point to the exact releases above. Adaptations to fixture bytes: none.

@@ -2,22 +2,41 @@
 
 Inventory date: 2026-09-17. Rust baseline: `9388052` on `main`, before the
 `docs/crush-test-parity` branch (documentation first, then Stage 1 tests). Policy:
-[Testing requirements](../.claude/TESTING.md).
+[Testing requirements](../../../.claude/TESTING.md).
 
-**Stage 1 now has 12 runnable golden integration scenarios** in
-[rados/tests/crush/golden.rs](../rados/tests/crush/golden.rs), containing
-87,040 expected mappings shared by both pinned releases. The first run
-against the unchanged mapper failed all 12 scenarios; compatibility is not
-yet verified. The original CRUSH unit suite passes 26 tests and ignores one.
-See [Stage 1 execution](#stage-1-execution) for evidence and adaptations.
+**All 12 golden integration scenarios now pass**, checking all 87,040
+ordered mappings and result-size histograms shared by the pinned releases.
+The original failing run and the fixes are recorded in
+[Stage 1](#stage-1-execution) and [Stage 2](#stage-2-mapper-fixes).
+This verifies these fixtures, not every possible CRUSH input or the full
+placement pipeline.
 
-Navigation: [Stage 1 execution](#stage-1-execution) · [Current Rust coverage](#current-rust-coverage) ·
+Navigation: [Stage 2 fixes](#stage-2-mapper-fixes) · [Stage 1 execution](#stage-1-execution) · [Current Rust coverage](#current-rust-coverage) ·
 [Prerequisites](#prerequisites-and-disposition-reasons) ·
 [Mapper](#mapper-unit-tests) · [Wrapper](#crushwrapper-unit-tests) ·
 [CLI](#crushtool-cases) · [Fixtures](#fixture-and-helper-catalogue) ·
 [Shell](#crush-shell-and-standalone-tests) ·
 [Placement](#adjacent-placement-and-management-tests) ·
 [Porting order](#recommended-porting-order-and-acceptance).
+
+## CRUSH validation requirements
+
+- Inventory all bucket algorithms, FIRSTN/INDEP, chooseleaf, MSR, retries,
+  zero/partial weights, reweighting, tunables, choose arguments, device
+  classes, hierarchy/locality, and placement overrides where relevant to
+  the reference release and client. Do not narrow coverage to the easiest
+  supported algorithm.
+- Preserve exact ordered OSD vectors, lengths, holes (`CRUSH_ITEM_NONE`),
+  failure domains, and changes after devices become unavailable. For the
+  placement pipeline, also compare raw/up/acting sets, primary, and EC shard
+  positions; a set-membership check loses required semantics.
+- Reuse crushtool maps and expected vectors. Preserve seeds, sample counts,
+  and acceptance criteria in statistical tests; golden vectors complement
+  those tests rather than replacing them. Printing-only diagnostics are not
+  assertion-based compatibility checks.
+- Preserve both expectations when releases differ and document which
+  version or feature selects the behavior. Unsupported behavior remains a
+  documented compatibility gap, not a passing substitute algorithm.
 
 ## References and coverage boundary
 
@@ -84,8 +103,8 @@ For CLI readiness, 12 complete mapping files are Ready now; invalid-map decoding
 
 ## Stage 1 execution
 
-Entry point: [rados/tests/crush.rs](../rados/tests/crush.rs), with golden tests
-in [crush/golden.rs](../rados/tests/crush/golden.rs). Run without Ceph tools,
+Entry point: [rados/tests/crush.rs](../crush.rs), with golden tests
+in [crush/golden.rs](golden.rs). Run without Ceph tools,
 a Ceph checkout, environment variables or a cluster:
 
 ```sh
@@ -93,7 +112,7 @@ cargo test -p rados --test crush --offline
 ```
 
 The 18 original inputs (6 binary maps and 12 Cram transcripts) are checked in
-with [provenance, SHA256 and licenses](../rados/tests/crush/fixtures/README.md).
+with [provenance, SHA256 and licenses](fixtures/README.md).
 Each file is byte-identical across the pinned releases. Tests preserve all
 87,040 ordered vectors, requested replica counts, seeds 0..1023, command
 weight/tunable overrides and result-size histograms. The helper validates every transcript
@@ -109,12 +128,11 @@ in the fixtures for review; revisit if a compatible CLI is implemented.
 There are no ignored tests or substituted expectations. Review: Pending.
 No generated oracle, upstream executable or live-cluster check was run.
 
-By explicit scope decision, Stage 1 changes only tests, fixtures and this
-inventory. Mapper fixes are a separate stage. The 12 tests remain active and
-make `cargo test -p rados --test crush` (and unfiltered test runs) fail until
-the implementation is corrected; this is an intentional failing baseline.
+Stage 1 (`478f061`) deliberately changed only tests, fixtures and this
+inventory. All 12 tests were left active and failing, with implementation
+fixes deferred to the separately authorized Stage 2 below.
 
-Initial and final functional runs on `8dbcbb8` plus the new tests (macOS,
+Stage 1 functional runs on `8dbcbb8` plus the new tests (macOS,
 default features, no Ceph runtime dependencies):
 **0 passed, 12 failed, 0 ignored**. All six maps decoded successfully and
 consumed their input. First differences (`expected -> actual`):
@@ -143,61 +161,106 @@ Additional validation on the final Stage 1 tree:
   commits; SHA256 values, 87,040 mapping records, source references, local
   document links and upstream license copies verified.
 
+## Stage 2 mapper fixes
+
+Base: `478f061`; environment: macOS, default Rust features, offline Cargo.
+The initial `cargo test -p rados --test crush --offline` reproduced all 12
+failures before edits. No golden test, map or expected transcript was changed.
+
+Corrections in [bucket.rs](../../src/crush/bucket.rs) and
+[mapper.rs](../../src/crush/mapper.rs):
+
+- STRAW keeps the first item on equal draws, matching Ceph. This alone made
+  all 10,240 INDEP vectors pass; the other 11 scenarios still failed.
+- FIRSTN always advances the retry input. Local retries retain the current
+  bucket; descent retries return to the initial bucket. Exhaustive fallback
+  uses Ceph's permutation selection, also shared with uniform buckets.
+- Chooseleaf keeps selected failure domains separately from selected OSDs,
+  checks collisions at the correct level, and honors `chooseleaf_descend_once`.
+- Recursive selection uses the output position, `chooseleaf_vary_r` shifted
+  parent input and `chooseleaf_stable` replica start as in Ceph. Intermediate
+  FIRSTN results respect the caller's output capacity.
+
+Algorithm references (the relevant functions match between these releases):
+[v17.2.7 mapper.c](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/crush/mapper.c#L51),
+[v20.2.4 mapper.c](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L54).
+
+Validation:
+
+- `cargo test -p rados --test crush --offline`: **12 passed**, 0 failed,
+  0 ignored; all **87,040 vectors** and all result-size histograms checked.
+- `cargo test --workspace --lib --offline`: **456 passed**, 0 failed,
+  1 ignored in `rados`; the macros crate has 0 unit tests. The sandbox first
+  blocked two existing loopback TCP tests; rerunning outside the sandbox
+  passed. No live Ceph cluster was used.
+- `cargo fmt --all -- --check` and `git diff --check`: passed.
+- `cargo clippy --workspace --all-targets --all-features --offline -- --no-deps -D warnings`:
+  blocked by the same two pre-existing unused constants documented in Stage 1.
+- `cargo clippy -p rados --lib --test crush --offline -- -D warnings -A dead-code`:
+  passed. No repository lint configuration was weakened.
+
+Scope limits: these maps contain STRAW/STRAW2 buckets; they do not establish
+complete uniform/list/tree coverage. Permutation selection currently rebuilds
+its local work array on each call; cache it only if profiling warrants it.
+The INDEP scenario selects device type directly; recursive INDEP, MSR, choose
+arguments and per-rule retry-setting opcodes still need their listed tests
+and fixes. No upstream executable differential or live-cluster gate was run.
+
 ## Current Rust coverage
 
 `cargo test -p rados --lib crush:: --offline` was run at the baseline: **26 passed, 0 failed, 1 ignored, 430 filtered out**. No Ceph gtest, crushtool differential run, or live-cluster gate was run.
 
 | Existing Rust test | What it establishes / gap |
 | --- | --- |
-| [rados/src/crush/bucket.rs::test_straw2_choose](../rados/src/crush/bucket.rs#L256) | One equal-weight bucket; valid range and repeatability only. |
-| [rados/src/crush/bucket.rs::test_uniform_choose](../rados/src/crush/bucket.rs#L283) | Valid range only; does not expose the documented incompatible permutation algorithm. |
-| [rados/src/crush/bucket.rs::test_bucket_choose](../rados/src/crush/bucket.rs#L302) | Valid device only. |
-| [rados/src/crush/bucket.rs::test_crush_ln](../rados/src/crush/bucket.rs#L321) | Two-point monotonicity, not bit-for-bit integer logarithm parity. |
-| [rados/src/crush/crush_ln_table.rs::test_rh_lh_table_approximate](../rados/src/crush/crush_ln_table.rs#L547) | Approximate table sanity with broad tolerance. |
-| [rados/src/crush/crush_ln_table.rs::test_table_sizes](../rados/src/crush/crush_ln_table.rs#L563) | Table lengths only. |
-| [rados/src/crush/crush_ln_table.rs::test_table_values_are_from_ceph](../rados/src/crush/crush_ln_table.rs#L573) | Selected constants; no complete mapper comparison. |
-| [rados/src/crush/crush_ln_table.rs::test_tables_are_monotonic](../rados/src/crush/crush_ln_table.rs#L598) | Table shape only. |
-| [rados/src/crush/decode.rs::test_decode_crushmap_corpus](../rados/src/crush/decode.rs#L357) | Ignored; hard-coded external corpus path; cannot validate CI decode parity. |
-| [rados/src/crush/decode.rs::test_device_class_methods](../rados/src/crush/decode.rs#L396) | Synthetic class-name/ID lookups, not decoded shadow-tree mapping. |
-| [rados/src/crush/hash.rs::test_crush_hash32_2](../rados/src/crush/hash.rs#L237) | One exact hash vector (`10, 2 -> 1838530675`); no pinned upstream test attribution. |
-| [rados/src/crush/hash.rs::test_ceph_str_hash_rjenkins](../rados/src/crush/hash.rs#L248) | Nonzero/determinism/different-input checks; no Ceph expected string hashes. |
-| [rados/src/crush/mapper.rs::test_is_out](../rados/src/crush/mapper.rs#L656) | Fully in/out and invalid IDs; no partial-weight oracle. |
-| [rados/src/crush/mapper.rs::test_crush_do_rule_simple](../rados/src/crush/mapper.rs#L672) | One flat bucket, one replica; valid device only. |
-| [rados/src/crush/mapper.rs::test_crush_choose_firstn](../rados/src/crush/mapper.rs#L730) | Allows fewer than the requested replicas; distinctness only when two are returned. |
-| [rados/src/crush/mapper.rs::test_crush_choose_indep](../rados/src/crush/mapper.rs#L764) | Flat bucket, three filled/distinct positions; no Ceph vector. |
-| [rados/src/crush/mapper.rs::test_crush_choose_indep_stable_positions](../rados/src/crush/mapper.rs#L802) | Repeats the same call; never changes availability. |
-| [rados/src/crush/mapper.rs::test_crush_choose_indep_with_out_device](../rados/src/crush/mapper.rs#L835) | All weights remain fully in; no device is actually marked out. |
-| [rados/src/crush/mapper.rs::test_crush_do_rule_indep](../rados/src/crush/mapper.rs#L881) | Count and uniqueness in a flat map; no ordered Ceph result. |
-| [rados/src/crush/mapper.rs::test_crush_do_rule_chooseleaf_indep](../rados/src/crush/mapper.rs#L956) | Flat device-level selection; no multi-level failure-domain assertion. |
-| [rados/src/crush/placement.rs::test_object_locator](../rados/src/crush/placement.rs#L411) | Rust locator construction. |
-| [rados/src/crush/placement.rs::test_pg_id](../rados/src/crush/placement.rs#L427) | Rust PG identity construction. |
-| [rados/src/crush/placement.rs::test_object_to_pg](../rados/src/crush/placement.rs#L435) | Deterministic synthetic object hashing; no upstream oracle. |
-| [rados/src/crush/placement.rs::test_object_to_pg_with_namespace](../rados/src/crush/placement.rs#L452) | Only asserts equal pool IDs; does not assert a namespace-dependent hash or PG seed. |
-| [rados/src/crush/placement.rs::test_pg_to_osds](../rados/src/crush/placement.rs#L465) | Synthetic map, count/range checks. |
-| [rados/src/crush/placement.rs::test_object_to_osds](../rados/src/crush/placement.rs#L531) | Synthetic end-to-end placement/repeatability. |
-| [rados/src/crush/placement.rs::test_pg_distribution](../rados/src/crush/placement.rs#L596) | Distribution sanity; does not prove ordered placement parity. |
+| [rados/src/crush/bucket.rs::test_straw2_choose](../../src/crush/bucket.rs#L265) | One equal-weight bucket; valid range and repeatability only. |
+| [rados/src/crush/bucket.rs::test_uniform_choose](../../src/crush/bucket.rs#L292) | Valid range only; no complete uniform-bucket Ceph mapping oracle. |
+| [rados/src/crush/bucket.rs::test_bucket_choose](../../src/crush/bucket.rs#L311) | Valid device only. |
+| [rados/src/crush/bucket.rs::test_crush_ln](../../src/crush/bucket.rs#L330) | Two-point monotonicity, not bit-for-bit integer logarithm parity. |
+| [rados/src/crush/crush_ln_table.rs::test_rh_lh_table_approximate](../../src/crush/crush_ln_table.rs#L547) | Approximate table sanity with broad tolerance. |
+| [rados/src/crush/crush_ln_table.rs::test_table_sizes](../../src/crush/crush_ln_table.rs#L563) | Table lengths only. |
+| [rados/src/crush/crush_ln_table.rs::test_table_values_are_from_ceph](../../src/crush/crush_ln_table.rs#L573) | Selected constants; no complete mapper comparison. |
+| [rados/src/crush/crush_ln_table.rs::test_tables_are_monotonic](../../src/crush/crush_ln_table.rs#L598) | Table shape only. |
+| [rados/src/crush/decode.rs::test_decode_crushmap_corpus](../../src/crush/decode.rs#L357) | Ignored; hard-coded external corpus path; cannot validate CI decode parity. |
+| [rados/src/crush/decode.rs::test_device_class_methods](../../src/crush/decode.rs#L396) | Synthetic class-name/ID lookups, not decoded shadow-tree mapping. |
+| [rados/src/crush/hash.rs::test_crush_hash32_2](../../src/crush/hash.rs#L237) | One exact hash vector (`10, 2 -> 1838530675`); no pinned upstream test attribution. |
+| [rados/src/crush/hash.rs::test_ceph_str_hash_rjenkins](../../src/crush/hash.rs#L248) | Nonzero/determinism/different-input checks; no Ceph expected string hashes. |
+| [rados/src/crush/mapper.rs::test_is_out](../../src/crush/mapper.rs#L651) | Fully in/out and invalid IDs; no partial-weight oracle. |
+| [rados/src/crush/mapper.rs::test_crush_do_rule_simple](../../src/crush/mapper.rs#L667) | One flat bucket, one replica; valid device only. |
+| [rados/src/crush/mapper.rs::test_crush_choose_firstn](../../src/crush/mapper.rs#L725) | Now asserts two distinct items after the helper signature change; this local unit scenario has no Ceph expected vector. |
+| [rados/src/crush/mapper.rs::test_crush_choose_indep](../../src/crush/mapper.rs#L758) | Flat bucket, three filled/distinct positions; no Ceph vector. |
+| [rados/src/crush/mapper.rs::test_crush_choose_indep_stable_positions](../../src/crush/mapper.rs#L796) | Repeats the same call; never changes availability. |
+| [rados/src/crush/mapper.rs::test_crush_choose_indep_with_out_device](../../src/crush/mapper.rs#L829) | All weights remain fully in; no device is actually marked out. |
+| [rados/src/crush/mapper.rs::test_crush_do_rule_indep](../../src/crush/mapper.rs#L875) | Count and uniqueness in a flat map; no ordered Ceph result. |
+| [rados/src/crush/mapper.rs::test_crush_do_rule_chooseleaf_indep](../../src/crush/mapper.rs#L950) | Flat device-level selection; no multi-level failure-domain assertion. |
+| [rados/src/crush/placement.rs::test_object_locator](../../src/crush/placement.rs#L411) | Rust locator construction. |
+| [rados/src/crush/placement.rs::test_pg_id](../../src/crush/placement.rs#L427) | Rust PG identity construction. |
+| [rados/src/crush/placement.rs::test_object_to_pg](../../src/crush/placement.rs#L435) | Deterministic synthetic object hashing; no upstream oracle. |
+| [rados/src/crush/placement.rs::test_object_to_pg_with_namespace](../../src/crush/placement.rs#L452) | Only asserts equal pool IDs; does not assert a namespace-dependent hash or PG seed. |
+| [rados/src/crush/placement.rs::test_pg_to_osds](../../src/crush/placement.rs#L465) | Synthetic map, count/range checks. |
+| [rados/src/crush/placement.rs::test_object_to_osds](../../src/crush/placement.rs#L531) | Synthetic end-to-end placement/repeatability. |
+| [rados/src/crush/placement.rs::test_pg_distribution](../../src/crush/placement.rs#L596) | Distribution sanity; does not prove ordered placement parity. |
 
 Related checks are not included in the 27-test total:
 
-- [OSDMap/CRUSH integration](../rados/tests/osdclient_osdmap_crush_integration_test.rs)
+- [OSDMap/CRUSH integration](../osdclient_osdmap_crush_integration_test.rs)
   returns successfully when its external corpus is absent. Even with input,
   the final assertion only requires some OSDMaps to decode, not a nonzero
   number of decoded CRUSH maps or matching mappings. Not run in this audit.
-- [Object placement integration](../rados/tests/osdclient_object_placement_test.rs)
+- [Object placement integration](../osdclient_object_placement_test.rs)
   has external-corpus skip paths. It is not an upstream mapping oracle.
   Not run in this audit.
-- [Ordering example](../rados/examples/crush_test_crush_ordering.rs) reads
+- [Ordering example](../../examples/crush_test_crush_ordering.rs) reads
   `/tmp/crushmap` and prints failure without failing the process. It is not a
   Cargo assertion test and its input is not checked in. Not run.
-- [OSDMap unit tests](../rados/src/osdclient/osdmap.rs) cover primary affinity,
+- [OSDMap unit tests](../../src/osdclient/osdmap.rs) cover primary affinity,
   temp/upmap overrides and EC shard transformations with local scenarios.
   They are useful overlap, not the full upstream OSDMap scenarios below;
   they were not run by the `crush::` filter.
 
 Implementation evidence requiring stronger tests:
-[Uniform selection](../rados/src/crush/bucket.rs#L139) explicitly differs from
-Ceph; [decode](../rados/src/crush/decode.rs#L123) discards choose arguments;
-[rule execution](../rados/src/crush/mapper.rs#L79) ignores three retry-setting
+[Uniform selection](../../src/crush/bucket.rs#L139) now shares permutation
+selection with FIRSTN fallback but still lacks a full uniform mapping oracle; [decode](../../src/crush/decode.rs#L123) discards choose arguments;
+[rule execution](../../src/crush/mapper.rs#L79) ignores three retry-setting
 opcodes and removes holes after `ChooseMsr`. These are inspected code paths,
 not failures reproduced by a differential test in this audit.
 
@@ -677,7 +740,7 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-bobtail-tunables.t
 
-**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::bobtail_tunables](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Passing; **Review:** Pending. Rust: [golden::bobtail_tunables](golden.rs). Adaptations: [Stage 1](#stage-1-execution); passing run: [Stage 2](#stage-2-mapper-fixes).
 
 **Readiness:** Ready now. Existing binary input and exact .t vectors/statistics; x=0..1023, replicas 1..10. Preserve the command-specific rule, weight overrides and tunables listed below; no Ceph build required for replay. Historical tunable names do not make these tests out of scope for Quincy.
 
@@ -687,7 +750,7 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-firefly-tunables.t
 
-**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::firefly_tunables](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Passing; **Review:** Pending. Rust: [golden::firefly_tunables](golden.rs). Adaptations: [Stage 1](#stage-1-execution); passing run: [Stage 2](#stage-2-mapper-fixes).
 
 **Readiness:** Ready now. Existing binary input and exact .t vectors/statistics; x=0..1023, replicas 1..10. Preserve the command-specific rule, weight overrides and tunables listed below; no Ceph build required for replay. Historical tunable names do not make these tests out of scope for Quincy.
 
@@ -708,7 +771,7 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-hammer-tunables.t
 
-**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::hammer_tunables](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Passing; **Review:** Pending. Rust: [golden::hammer_tunables](golden.rs). Adaptations: [Stage 1](#stage-1-execution); passing run: [Stage 2](#stage-2-mapper-fixes).
 
 **Readiness:** Ready now. Existing binary input and exact .t vectors/statistics; x=0..1023, replicas 1..10. Preserve the command-specific rule, weight overrides and tunables listed below; no Ceph build required for replay. Historical tunable names do not make these tests out of scope for Quincy.
 
@@ -718,7 +781,7 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-indep.t
 
-**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::indep](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Passing; **Review:** Pending. Rust: [golden::indep](golden.rs). Adaptations: [Stage 1](#stage-1-execution); passing run: [Stage 2](#stage-2-mapper-fixes).
 
 **Readiness:** Ready now. Existing binary input and exact .t vectors/statistics; x=0..1023, replicas 1..10. Preserve the command-specific rule, weight overrides and tunables listed below; no Ceph build required for replay. Historical tunable names do not make these tests out of scope for Quincy.
 
@@ -728,7 +791,7 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-jewel-tunables.t
 
-**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::jewel_tunables](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Passing; **Review:** Pending. Rust: [golden::jewel_tunables](golden.rs). Adaptations: [Stage 1](#stage-1-execution); passing run: [Stage 2](#stage-2-mapper-fixes).
 
 **Readiness:** Ready now. Existing binary input and exact .t vectors/statistics; x=0..1023, replicas 1..10. Preserve the command-specific rule, weight overrides and tunables listed below; no Ceph build required for replay. Historical tunable names do not make these tests out of scope for Quincy.
 
@@ -738,7 +801,7 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-legacy-tunables.t
 
-**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::legacy_tunables](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Passing; **Review:** Pending. Rust: [golden::legacy_tunables](golden.rs). Adaptations: [Stage 1](#stage-1-execution); passing run: [Stage 2](#stage-2-mapper-fixes).
 
 **Readiness:** Ready now. Existing binary input and exact .t vectors/statistics; x=0..1023, replicas 1..10. Preserve the command-specific rule, weight overrides and tunables listed below; no Ceph build required for replay. Historical tunable names do not make these tests out of scope for Quincy.
 
@@ -748,7 +811,7 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-tries-vs-retries.t
 
-**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::tries_vs_retries](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Passing; **Review:** Pending. Rust: [golden::tries_vs_retries](golden.rs). Adaptations: [Stage 1](#stage-1-execution); passing run: [Stage 2](#stage-2-mapper-fixes).
 
 **Readiness:** Ready now. Existing binary input and exact .t vectors/statistics; x=0..1023, replicas 1..10. Preserve the command-specific rule, weight overrides and tunables listed below; no Ceph build required for replay. Historical tunable names do not make these tests out of scope for Quincy.
 
@@ -758,7 +821,7 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-vary-r-0.t
 
-**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::vary_r_0](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Passing; **Review:** Pending. Rust: [golden::vary_r_0](golden.rs). Adaptations: [Stage 1](#stage-1-execution); passing run: [Stage 2](#stage-2-mapper-fixes).
 
 **Readiness:** Ready now. Existing test-map-vary-r.crushmap; rule 3, vary_r=0, OSDs 0/4/9 out, x=0..1023, replicas 2/3/4. Compare all 3072 ordered vectors and result-size counts, including undersized results.
 
@@ -768,7 +831,7 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-vary-r-1.t
 
-**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::vary_r_1](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Passing; **Review:** Pending. Rust: [golden::vary_r_1](golden.rs). Adaptations: [Stage 1](#stage-1-execution); passing run: [Stage 2](#stage-2-mapper-fixes).
 
 **Readiness:** Ready now. Existing test-map-vary-r.crushmap; rule 3, vary_r=1, OSDs 0/4/9 out, x=0..1023, replicas 2/3/4. Compare all 3072 ordered vectors and result-size counts, including undersized results.
 
@@ -778,7 +841,7 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-vary-r-2.t
 
-**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::vary_r_2](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Passing; **Review:** Pending. Rust: [golden::vary_r_2](golden.rs). Adaptations: [Stage 1](#stage-1-execution); passing run: [Stage 2](#stage-2-mapper-fixes).
 
 **Readiness:** Ready now. Existing test-map-vary-r.crushmap; rule 3, vary_r=2, OSDs 0/4/9 out, x=0..1023, replicas 2/3/4. Compare all 3072 ordered vectors and result-size counts, including undersized results.
 
@@ -788,7 +851,7 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-vary-r-3.t
 
-**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::vary_r_3](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Passing; **Review:** Pending. Rust: [golden::vary_r_3](golden.rs). Adaptations: [Stage 1](#stage-1-execution); passing run: [Stage 2](#stage-2-mapper-fixes).
 
 **Readiness:** Ready now. Existing test-map-vary-r.crushmap; rule 3, vary_r=3, OSDs 0/4/9 out, x=0..1023, replicas 2/3/4. Compare all 3072 ordered vectors and result-size counts, including undersized results.
 
@@ -798,7 +861,7 @@ the client subset and the CLI/editor exclusion are explicitly distinguished.
 
 ### test-map-vary-r-4.t
 
-**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Failing; **Review:** Pending. Rust: [golden::vary_r_4](../rados/tests/crush/golden.rs). Adaptations and execution: [Stage 1](#stage-1-execution).
+**Coverage:** Partial (all client mapping/statistics assertions ported; CLI presentation excluded); **Verification:** Passing; **Review:** Pending. Rust: [golden::vary_r_4](golden.rs). Adaptations: [Stage 1](#stage-1-execution); passing run: [Stage 2](#stage-2-mapper-fixes).
 
 **Readiness:** Ready now. Existing test-map-vary-r.crushmap; rule 3, vary_r=4, OSDs 0/4/9 out, x=0..1023, replicas 2/3/4. Compare all 3072 ordered vectors and result-size counts, including undersized results.
 

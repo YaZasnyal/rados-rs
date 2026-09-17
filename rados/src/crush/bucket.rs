@@ -1,7 +1,7 @@
 // Bucket selection algorithms for CRUSH
 // Reference: ~/dev/ceph/src/crush/mapper.c
 
-use crate::crush::hash::{crush_hash32_2, crush_hash32_3, crush_hash32_4};
+use crate::crush::hash::{crush_hash32_3, crush_hash32_4};
 use crate::crush::mapper::CRUSH_ITEM_NONE;
 use crate::crush::types::{BucketAlgorithm, BucketData, CrushBucket};
 use crate::denc::constants::crush::{FIXED_POINT_MASK, LN_LOOKUP_OFFSET};
@@ -13,7 +13,7 @@ pub fn bucket_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
     }
     match bucket.alg {
         BucketAlgorithm::Straw2 => bucket_straw2_choose(bucket, x, r),
-        BucketAlgorithm::Uniform => bucket_uniform_choose(bucket, x, r),
+        BucketAlgorithm::Uniform => bucket_perm_choose(bucket, x, r),
         BucketAlgorithm::List => bucket_list_choose(bucket, x, r),
         BucketAlgorithm::Tree => bucket_tree_choose(bucket, x, r),
         BucketAlgorithm::Straw => bucket_straw_choose(bucket, x, r),
@@ -136,19 +136,27 @@ fn bucket_straw2_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
     bucket.items[high]
 }
 
-/// Uniform bucket selection (O(1), simple hash).
-///
-/// NOTE: This is a simplified implementation that does NOT match the C++
-/// `bucket_perm_choose` permutation scheme used for uniform buckets.
-/// Uniform buckets are deprecated since Hammer (2015) and no modern Ceph
-/// cluster uses them — all clusters use straw2.  Since our minimum Ceph
-/// version is Quincy (v17), this code path is effectively dead.  If uniform
-/// bucket support is ever needed, this must be replaced with the full
-/// stateful Fisher-Yates permutation from `crush/mapper.c`.
-fn bucket_uniform_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
-    let hash = crush_hash32_2(x, r);
-    let index = (hash % bucket.size) as usize;
-    bucket.items[index]
+/// Ceph's permutation selection for uniform buckets and FIRSTN fallback.
+/// Reference: src/crush/mapper.c::bucket_perm_choose, v17.2.7 and v20.2.4.
+pub(crate) fn bucket_perm_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
+    if bucket.size == 0 {
+        return CRUSH_ITEM_NONE;
+    }
+    let position = r % bucket.size;
+    if position == 0 {
+        let index = crush_hash32_3(x, bucket.id as u32, 0) % bucket.size;
+        return bucket.items[index as usize];
+    }
+
+    // Rebuild in O(bucket size); a per-mapping workspace can cache this if needed.
+    let mut permutation: Vec<_> = (0..bucket.size).collect();
+    for p in 0..=position {
+        if p < bucket.size - 1 {
+            let offset = crush_hash32_3(x, bucket.id as u32, p) % (bucket.size - p);
+            permutation.swap(p as usize, (p + offset) as usize);
+        }
+    }
+    bucket.items[permutation[position as usize] as usize]
 }
 
 /// List bucket selection (legacy)
@@ -237,7 +245,8 @@ fn bucket_straw_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
         _ => unreachable!("bucket_straw_choose called on non-Straw bucket"),
     };
 
-    match (0..bucket.size as usize).max_by_key(|&i| {
+    // Ceph keeps the first item on equal draws; max_by_key keeps the last.
+    match (0..bucket.size as usize).rev().max_by_key(|&i| {
         let mut draw = crush_hash32_3(x, bucket.items[i] as u32, r) as u64;
         draw &= 0xffff;
         draw.wrapping_mul(straws[i] as u64)
@@ -294,7 +303,7 @@ mod tests {
             },
         };
 
-        let item = bucket_uniform_choose(&bucket, 123, 0);
+        let item = bucket_choose(&bucket, 123, 0);
         assert!((0..=2).contains(&item));
     }
 

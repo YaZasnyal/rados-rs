@@ -3,6 +3,8 @@
 These requirements apply to agents implementing, porting, or reviewing tests
 and Ceph-compatible behavior in this repository. Read them before starting
 such work. Keep test documentation, source references, and reports in English.
+This file defines the testing process, not a catalogue of component tests.
+Keep case lists, fixtures, readiness and execution results beside the tests.
 
 The goal is the same observable behavior as Ceph C/C++, including results,
 ordering, errors, and failure handling. A plausible result or a passing smoke
@@ -78,8 +80,10 @@ license notices when copying or adapting upstream code or data.
 
 ## Coverage and readiness inventory
 
-For CRUSH work, read and update the
-[CRUSH test parity inventory](../docs/crush-test-parity.md).
+Find and read the relevant component inventory beside its tests before
+changing coverage, and update it in the same change. For an example of the
+format, see the [CRUSH inventory](../rados/tests/crush/test-parity.md); its
+case list and component-specific requirements belong there, not in this policy.
 
 Maintain a component-level inventory as tests are investigated and ported.
 Every discovered relevant test needs an explicit disposition; missing Rust
@@ -112,24 +116,21 @@ still needs a disposition. Difficulty, implementation gaps, and passing smoke
 tests are not scope exclusions. Record review decisions honestly; use
 `Pending` when a disposition has not been reviewed.
 
-## CRUSH and placement
+## Observable behavior
 
-- Inventory all bucket algorithms, FIRSTN/INDEP, chooseleaf, MSR, retries,
-  zero/partial weights, reweighting, tunables, choose arguments, device
-  classes, hierarchy/locality, and placement overrides where relevant to
-  the reference release and client. Do not narrow coverage to the easiest
-  supported algorithm.
-- Preserve exact ordered OSD vectors, lengths, holes (`CRUSH_ITEM_NONE`),
-  failure domains, and changes after devices become unavailable. For the
-  placement pipeline, also compare raw/up/acting sets, primary, and EC shard
-  positions; a set-membership check loses required semantics.
-- Reuse crushtool maps and expected vectors. Preserve seeds, sample counts,
-  and acceptance criteria in statistical tests; golden vectors complement
-  those tests rather than replacing them. Printing-only diagnostics are not
-  assertion-based compatibility checks.
+- Cover all relevant algorithms, modes, configuration and feature variants,
+  boundary values, failure cases, retries and state transitions. Do not narrow
+  coverage to the easiest supported variant.
+- Preserve exact outputs, ordering, lengths, sentinel values, error types and
+  side effects. Check intermediate results when a pipeline's final output
+  can hide an earlier error; set membership alone cannot prove ordering.
+- Reuse upstream regression inputs and expected outputs. Preserve seeds,
+  sample counts and acceptance criteria for statistical tests. Golden tests
+  complement behavioral and statistical tests rather than replacing them.
+  Printing-only diagnostics are not assertion-based compatibility checks.
 - Preserve both expectations when releases differ and document which
   version or feature selects the behavior. Unsupported behavior remains a
-  documented compatibility gap, not a passing substitute algorithm.
+  documented compatibility gap, not a passing substitute implementation.
 
 ## Execution and reporting
 
