@@ -145,10 +145,24 @@ cover ordered before/after mappings for every rule, replicas 1..10 and x=0..1023
 It preserves `e` 6540/8417, `c` 158/138/0, and `gabe2`/`f` 627/652 movements;
 `gabe` remains the transcript's producer-side failure.
 
-`generate-mon-classes-reference.py --check` uses adjacent self-cleaning
+`generate-mon-classes-reference.py ../ceph --check` uses adjacent self-cleaning
 `live-mon-classes-preflight.sh` to compare fresh pinned-C lifecycle maps and
 240 class-rule vectors. The non-root three-OSD memstore topology leaves no
-persistent cluster state.
+persistent cluster state. It extracts `TEST_mon_classes` from both pins,
+checks its identical SHA256 `2a9140cf59fe452de815aa7f61cff56f17c1435a0a3346a2d663eed05be05639`,
+extracts its 30 state-changing commands (including idempotent and expected-failure
+operations), and runs that source-derived sequence. Sources:
+[Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/qa/standalone/crush/crush-classes.sh#L166)
+and [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/qa/standalone/crush/crush-classes.sh#L166).
+
+| Generated file | SHA256 |
+| --- | --- |
+| `mon-classes-removed-quincy.crushmap` | `acd5cef0b526aead6b6766b00fe09a3afda0292b4693cb34a4dc1f07c18f7855` |
+| `mon-classes-removed-tentacle.crushmap` | `134c0eb4946f1906d37f5385cb58b1664021e6c1e9db7db4cf07f16c2ebdec98` |
+| `mon-classes-asdf-quincy.crushmap` / `mon-classes-asdf-tentacle.crushmap` | `984a961ff5045b53fe63b35e066bec5a4b7c580f3fc4dcba5eaf228f0cfa3deb` / `8ab2044dc534bcdb53f2efa94d96347c341d738cd1c259a280a4abdbfcef5048` |
+| `mon-classes-abc-quincy.crushmap` / `mon-classes-abc-tentacle.crushmap` | `a985e3bb855fd009fcb73450084683b57e2dcd2baa804dc67474a02933ad0bf6` / `d7674ea9e91d14a44a9d41a66e7161a8beadc8dc6064faa83a8f20935a7aa4d0` |
+| `mon-classes-class2-quincy.crushmap` / `mon-classes-class2-tentacle.crushmap` | `f0be7a5b8245ec8f36c597ab40ce4ddd3f281141db17f19da0e375080b5b0768` / `dc1784f18076c0a15e2a1d977087e11c5dded409b399e6b27a3fc7f3becfe0bc` |
+| `mon-classes-vectors.txt` | `43dc7a08206d7ae3229014210afbf0b3f5fe6c0f5185064d89868cfbb041faa3` |
 
 ## Choose-argument fixtures
 

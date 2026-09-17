@@ -341,6 +341,22 @@ fn assert_class_rule(map: &CrushMap, rule: u32, name: &str, take: i32) {
     assert_eq!(rule.steps[2].op, RuleOp::Emit);
 }
 
+fn assert_default_rule(map: &CrushMap) {
+    let rule = map.get_rule(0).unwrap();
+    assert_eq!(
+        map.rule_names.get(&0).map(String::as_str),
+        Some("replicated_rule")
+    );
+    assert_eq!(rule.rule_type, RuleType::Replicated);
+    assert_eq!(rule.steps.len(), 3);
+    assert_eq!((rule.steps[0].op, rule.steps[0].arg1), (RuleOp::Take, -1));
+    assert_eq!(
+        (rule.steps[1].op, rule.steps[1].arg1, rule.steps[1].arg2),
+        (RuleOp::ChooseFirstN, 0, 0)
+    );
+    assert_eq!(rule.steps[2].op, RuleOp::Emit);
+}
+
 fn assert_complete_class_map(map: &CrushMap, devices: &[(i32, i32)]) {
     let expected = map
         .class_bucket
@@ -374,26 +390,7 @@ fn mon_classes_retained_maps_keep_lifecycle_metadata_and_filtered_placements() {
                 && removed.class_bucket.is_empty()
         );
         assert!(removed.choose_args.is_empty());
-        let default_rule = removed.get_rule(0).unwrap();
-        assert_eq!(
-            removed.rule_names.get(&0).map(String::as_str),
-            Some("replicated_rule")
-        );
-        assert_eq!(default_rule.rule_type, RuleType::Replicated);
-        assert_eq!(default_rule.steps.len(), 3);
-        assert_eq!(
-            (default_rule.steps[0].op, default_rule.steps[0].arg1),
-            (RuleOp::Take, -1)
-        );
-        assert_eq!(
-            (
-                default_rule.steps[1].op,
-                default_rule.steps[1].arg1,
-                default_rule.steps[1].arg2
-            ),
-            (RuleOp::ChooseFirstN, 0, 0)
-        );
-        assert_eq!(default_rule.steps[2].op, RuleOp::Emit);
+        assert_default_rule(&removed);
 
         let asdf = decode(mon_classes_map("asdf", release));
         assert_eq!(
@@ -522,27 +519,39 @@ fn mon_classes_retained_maps_keep_lifecycle_metadata_and_filtered_placements() {
         assert_straw_bucket(&class2, -18, 11, 65, &[-17], &[65]);
         assert_straw_bucket(&class2, -19, 1, 130, &[0, 1], &[65, 65]);
         assert_straw_bucket(&class2, -20, 11, 130, &[-19], &[130]);
-        for (id, weight) in [
-            (-3, 0),
-            (-4, 0),
-            (-5, 0),
-            (-6, 0),
-            (-10, 0),
-            (-11, 0),
-            (-12, 0),
-            (-13, 0),
-            (-14, 0),
-            (-15, 0),
-            (-16, 65),
-            (-17, 65),
-            (-18, 65),
-            (-19, 130),
-            (-20, 130),
+        for (id, kind, weight, items, weights) in [
+            (-3, 1, 0, &[][..], &[][..]),
+            (-4, 11, 0, &[-3][..], &[0][..]),
+            (-5, 1, 0, &[][..], &[][..]),
+            (-6, 3, 0, &[-5][..], &[0][..]),
+            (-10, 1, 0, &[][..], &[][..]),
+            (-11, 3, 0, &[-10][..], &[0][..]),
+            (-12, 11, 0, &[-11][..], &[0][..]),
+            (-13, 11, 0, &[-6][..], &[0][..]),
+            (-14, 1, 0, &[][..], &[][..]),
+            (-15, 11, 0, &[-14][..], &[0][..]),
+            (-16, 1, 65, &[2][..], &[65][..]),
+            (-17, 3, 65, &[-16][..], &[65][..]),
+            (-18, 11, 65, &[-17][..], &[65][..]),
+            (-19, 1, 130, &[0, 1][..], &[65, 65][..]),
+            (-20, 11, 130, &[-19][..], &[130][..]),
         ] {
-            assert_eq!(class2.get_bucket(id).unwrap().weight, weight);
+            assert_straw_bucket(&class2, id, kind, weight, items, weights);
         }
         assert_complete_class_map(&class2, &[(0, 2), (1, 2), (2, 2)]);
         assert!(class2.choose_args.is_empty());
+        assert_eq!(class2.rules.len(), 4);
+        assert_eq!(
+            class2
+                .rules
+                .iter()
+                .flatten()
+                .map(|rule| rule.rule_id)
+                .collect::<Vec<_>>(),
+            [0, 1, 2, 3]
+        );
+        assert_eq!(class2.rule_names.len(), 4);
+        assert_default_rule(&class2);
         assert_class_rule(&class2, 1, "asdf-rule", -4);
         assert_class_rule(&class2, 2, "foo-rule", -13);
         assert_class_rule(&class2, 3, "class_1_rule", -20);

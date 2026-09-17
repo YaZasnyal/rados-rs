@@ -4,7 +4,9 @@ Run: python3 rados/tests/crush/reference/generate-mon-classes-reference.py
 Requires the pinned ARM64 Docker images and the adjacent bounded topology
 script live-mon-classes-preflight.sh.
 """
+import hashlib
 from pathlib import Path
+import re
 import subprocess as sp
 import sys
 import tempfile
@@ -12,7 +14,9 @@ import time
 
 reference = Path(__file__).resolve().parent
 preflight = reference / "live-mon-classes-preflight.sh"
-check = sys.argv[1:] == ["--check"]
+arguments = sys.argv[1:]
+check = arguments[-1:] == ["--check"]
+ceph = Path(arguments[0]).resolve() if arguments and not arguments[0].startswith("--") else Path("../ceph").resolve()
 releases = (
     ("quincy", "17.2.7", "b12291d110049b2f35e32e0de30d70e9a4c060d2",
      "a70ccb2d8a0e814aa1c009e7541289b99bf039521727b6f44611499e9ca3fada"),
@@ -21,11 +25,32 @@ releases = (
 )
 state_rules = {"asdf": (1,), "abc": (1, 2), "class2": (1, 2, 3)}
 docker = ["docker", "run", "--rm", "--network", "none", "-i", "--entrypoint"]
+source_prefixes = (
+    "ceph osd crush class create ",
+    "ceph osd crush class rename ",
+    "ceph osd crush class rm ",
+    "ceph osd erasure-code-profile ",
+    "ceph osd crush set-device-class ",
+    "ceph osd crush rm-device-class ",
+    "ceph osd crush move ",
+    "ceph osd crush rule create-replicated ",
+)
 
 
 def command(name, script):
     script = "conf=$(echo /tmp/rados-mon-classes.*/ceph.conf); " + script.replace("ceph ", "ceph --conf \"$conf\" ")
     sp.run(["docker", "exec", name, "bash", "-ec", script], check=True, stdout=sp.DEVNULL)
+
+
+def lifecycle_commands(block):
+    commands = []
+    for line in block.splitlines():
+        failure = line.lstrip().startswith("expect_failure ")
+        match = re.search(r"\bceph osd (?:crush|erasure-code-profile) .*?(?= \|\||$)", line)
+        if match and match.group().startswith(source_prefixes):
+            commands.append(("! " if failure else "") + match.group())
+    assert len(commands) == 30, commands
+    return commands
 
 
 def capture(name, state, output):
@@ -48,6 +73,10 @@ for release, version, revision, image_digest in releases:
     image = "quay.io/ceph/ceph@sha256:" + image_digest
     identity = sp.check_output(docker + ["ceph", image, "--version"], text=True)
     assert f"ceph version {version} ({revision})" in identity, identity
+    source = sp.check_output(["git", "-C", str(ceph), "show", f"{revision}:qa/standalone/crush/crush-classes.sh"], text=True)
+    block = source[source.index("function TEST_mon_classes()") : source.index("\n}\n", source.index("function TEST_mon_classes()")) + 2]
+    assert hashlib.sha256((block + "\n").encode()).hexdigest() == "2a9140cf59fe452de815aa7f61cff56f17c1435a0a3346a2d663eed05be05639"
+    commands = lifecycle_commands(block)
     name = f"crush-mon-classes-{release}-{int(time.time())}"
     log = Path(tempfile.mkstemp(prefix=f".mon-classes-{release}-", suffix=".log")[1])
     with log.open("w") as output:
@@ -66,14 +95,13 @@ for release, version, revision, image_digest in releases:
                 time.sleep(1)
             with tempfile.TemporaryDirectory(prefix=".mon-classes-", dir=reference) as temporary:
                 work = Path(temporary)
-                command(name, "ceph osd crush class create CLASS; ceph osd crush class create CLASS; ceph osd crush class rename CLASS TEMP; ceph osd crush class rename TEMP CLASS; ceph osd erasure-code-profile set myprofile plugin=jerasure technique=reed_sol_van k=2 m=1 crush-failure-domain=osd crush-device-class=CLASS; ! ceph osd crush class rm CLASS; ceph osd erasure-code-profile rm myprofile; ceph osd crush class rm CLASS; ceph osd crush class rm CLASS")
-                command(name, "ceph osd crush set-device-class aaa osd.0; ceph osd crush set-device-class bbb osd.1; ceph osd crush set-device-class ccc osd.2; ceph osd crush rm-device-class 0; ceph osd crush rm-device-class 1; ceph osd crush rm-device-class 2")
+                command(name, "; ".join(commands[:15]))
                 generated[release, "removed"] = capture(name, "removed", work / "removed.crushmap")
-                command(name, "ceph osd crush set-device-class asdf all; ceph osd crush rule create-replicated asdf-rule default host asdf; ceph osd crush rm-device-class all")
+                command(name, "; ".join(commands[15:18]))
                 generated[release, "asdf"] = capture(name, "asdf", work / "asdf.crushmap")
-                command(name, "ceph osd crush set-device-class abc osd.2; ceph osd crush move osd.2 root=foo rack=foo-rack host=foo-host; ceph osd crush rm-device-class osd.2; ceph osd crush set-device-class abc osd.2; ceph osd crush rule create-replicated foo-rule foo host abc; ceph osd crush set-device-class hdd osd.0; ! ceph osd crush set-device-class nvme osd.0")
+                command(name, "; ".join(commands[18:25]))
                 generated[release, "abc"] = capture(name, "abc", work / "abc.crushmap")
-                command(name, "ceph osd crush rm-device-class all; ceph osd crush set-device-class class_1 all; ceph osd crush rule create-replicated class_1_rule default host class_1; ceph osd crush class rename class_1 class_2; ceph osd crush class rename class_1 class_2")
+                command(name, "; ".join(commands[25:]))
                 generated[release, "class2"] = capture(name, "class2", work / "class2.crushmap")
         finally:
             sp.run(["docker", "stop", "--time", "5", name], stdout=sp.DEVNULL, stderr=sp.DEVNULL, check=False)

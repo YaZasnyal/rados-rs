@@ -38,7 +38,7 @@ mkdir "$live_dir/mon"
 ceph-mon -i a --mkfs
 ceph-mon -i a -f > "$live_dir/mon.stdout.log" 2>&1 &
 for attempt in $(seq 1 30); do
-  if timeout 3 ceph mon stat; then break; fi
+  if timeout 3 ceph mon stat >/dev/null 2>&1; then break; fi
   [ "$attempt" -ne 30 ]
   sleep 1
 done
@@ -50,7 +50,7 @@ for id in 0 1 2; do
   ceph-osd -i "$id" -f > "$live_dir/osd.$id.stdout.log" 2>&1 &
 done
 for attempt in $(seq 1 60); do
-  if ceph osd dump -f json | python3 -c 'import json,sys; d=json.load(sys.stdin); assert len(d["osds"]) == 3 and all(x["up"] and x["in"] for x in d["osds"])'; then break; fi
+  if ceph osd dump -f json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); assert len(d["osds"]) == 3 and all(x["up"] and x["in"] for x in d["osds"])' 2>/dev/null; then break; fi
   [ "$attempt" -ne 60 ]
   sleep 1
 done
