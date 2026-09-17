@@ -7,11 +7,12 @@ Inventory date: 2026-09-17. Rust baseline: `9388052` on `main`, before the
 **All 12 golden integration scenarios now pass**, checking all 87,040
 ordered mappings and result-size histograms shared by the pinned releases.
 The original failing run and the fixes are recorded in
-[Stage 1](#stage-1-execution) and [Stage 2](#stage-2-mapper-fixes).
+[Stage 1](#stage-1-execution), [Stage 2](#stage-2-mapper-fixes), and
+[Stage 3](#stage-3-tentacle-functional-ports).
 This verifies these fixtures, not every possible CRUSH input or the full
 placement pipeline.
 
-Navigation: [Stage 2 fixes](#stage-2-mapper-fixes) · [Stage 1 execution](#stage-1-execution) · [Current Rust coverage](#current-rust-coverage) ·
+Navigation: [Stage 3 functional ports](#stage-3-tentacle-functional-ports) · [Stage 2 fixes](#stage-2-mapper-fixes) · [Stage 1 execution](#stage-1-execution) · [Current Rust coverage](#current-rust-coverage) ·
 [Prerequisites](#prerequisites-and-disposition-reasons) ·
 [Mapper](#mapper-unit-tests) · [Wrapper](#crushwrapper-unit-tests) ·
 [CLI](#crushtool-cases) · [Fixtures](#fixture-and-helper-catalogue) ·
@@ -87,9 +88,9 @@ variants; both must be preserved.
 | Primary unit suite | Source definitions | Expanded variants | Ready now | Blocked | Outside client scope | Verified ports |
 | --- | --- | --- | --- | --- | --- | --- |
 | v17.2.7: mapper + wrapper | 33 | 33 | 1 | 14 | 18 | 0 |
-| v20.2.4: mapper + wrapper | 46 | 60 | 33 | 9 | 18 | 0 |
+| v20.2.4: mapper + wrapper | 46 | 60 | 33 | 9 | 18 | 13 |
 
-Each Ready-now unit total includes one `straw2_stddev` diagnostic without a distribution assertion. All source definitions have Coverage: Not ported. Expanded variants do not represent additional Rust tests.
+Each Ready-now unit total includes one `straw2_stddev` diagnostic without a distribution assertion. Stage 3 ports 28 Tentacle variants, of which 13 are verified passing; other source definitions have Coverage: Not ported. Expanded variants do not represent additional upstream definitions.
 
 | Other catalogue | v17.2.7 | v20.2.4 | Counting unit |
 | --- | --- | --- | --- |
@@ -205,6 +206,49 @@ its local work array on each call; cache it only if profiling warrants it.
 The INDEP scenario selects device type directly; recursive INDEP, MSR, choose
 arguments and per-rule retry-setting opcodes still need their listed tests
 and fixes. No upstream executable differential or live-cluster gate was run.
+
+## Stage 3 Tentacle functional ports
+
+Base: `81d34c8`. This test-only stage adds
+[`functional.rs`](functional.rs), covering all seven `IndepTest` and seven
+`FirstnTest` scenarios from Tentacle with separate NORMAL and MSR executions:
+**28 ported variants**. Coverage: Ported; Readiness: Ready now; Review:
+Pending. Verification is recorded per variant below.
+
+The setup reproduces `build_indep_map` and `build_firstn_map`: optimal
+tunables, a STRAW root, rack and host hierarchy, equal fixed-point weights,
+the original rule steps and the bucket allocation order produced by
+`CrushWrapper::insert_item`. The Rust adaptation constructs that map directly
+because this client has no CRUSH editor. Assertions retain the original seed
+ranges, requested result sizes, holes, uniqueness, positional stability,
+movement bounds and retry overrides. Upstream supplies behavioral assertions,
+not exact output vectors, for these cases.
+
+`cargo test -p rados --test crush --offline --no-fail-fast` completed all 40
+tests: the existing 12 goldens and 13 functional variants passed; 15 functional
+variants failed. No mapper code or expectation was changed.
+
+| Scenario | NORMAL | MSR |
+| --- | --- | --- |
+| `IndepTest.toosmall` | Passing | Failing: result holes/width lost |
+| `IndepTest.basic` | Passing | Failing: requested width 5 becomes 3 |
+| `IndepTest.single_out_first` | Failing: later position changes | Failing: requested width 5 becomes 3 |
+| `IndepTest.single_out_last` | Failing: earlier position changes | Failing: requested width 5 becomes 3 |
+| `IndepTest.out_alt` | Passing | Failing: requested width 9 becomes 3 |
+| `IndepTest.out_contig` | Failing: required hole is removed | Failing: requested width 7 becomes 2 |
+| `IndepTest.out_progressive` | Failing: movement bound exceeded | Failing: movement bound exceeded after result collapse |
+| `FirstnTest.basic` | Passing | Passing |
+| `FirstnTest.toosmall` | Passing | Failing: expected 3 results, got 1 |
+| `FirstnTest.single_out_first` | Passing | Failing: suffix does not shift as required |
+| `FirstnTest.single_out_last` | Passing | Passing |
+| `FirstnTest.out_alt` | Passing | Failing: requested width 9 becomes 3 |
+| `FirstnTest.out_contig` | Passing | Failing: expected 6 results, got 2 |
+| `FirstnTest.out_progressive` | Passing | Passing |
+
+These failures are the baseline for a separate mapper-fix stage. In
+particular, the MSR rule currently executes each `ChooseMsr` step against the
+final result width and filters holes before `Emit`; the failing tests show the
+observable consequences without prescribing the fix.
 
 ## Current Rust coverage
 
@@ -1068,10 +1112,11 @@ Identifiers for unnamed script sections below are locally assigned; each link po
    preserve each command's tunables and weights, and fail with release,
    fixture, rule, x and replica count on a mismatch. Run without Ceph or a
    cluster after import. Do not reduce samples to make the suite green.
-2. **Tentacle functional scenarios:** port all NORMAL/MSR parameter variants
-   and four dedicated MSR tests using the original setup. Add both weight
-   distribution shell assertions. `straw2_stddev` may be ported as a diagnostic
-   but must not inflate the count of assertion-based parity checks.
+2. **Tentacle functional scenarios:** the 28 NORMAL/MSR `IndepTest` and
+   `FirstnTest` variants are ported in Stage 3. Next port the four dedicated
+   MSR tests using their original setups, then add both weight-distribution
+   shell assertions. `straw2_stddev` may be ported as a diagnostic but must not
+   inflate the count of assertion-based parity checks.
 3. **Unblock reference preparation:** obtain pinned tools, capture original
    text maps and unequal-weight STRAW setup, and record RNG provenance.
    Resolve the Quincy type-123 adaptation explicitly, then port every Quincy

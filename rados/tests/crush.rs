@@ -2,3 +2,6 @@
 
 #[path = "crush/golden.rs"]
 mod golden;
+
+#[path = "crush/functional.rs"]
+mod functional;
