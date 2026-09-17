@@ -1,8 +1,7 @@
 # CRUSH test status
 
-This page records what has been ported and what remains. Test preparation,
-execution history and audit notes live in [`.notes/crush`](../../../.notes/crush).
-Unmodified upstream maps and transcripts are documented in
+This page records what has been ported and what remains. Unmodified upstream
+maps and transcripts are documented in
 [fixtures/README.md](fixtures/README.md). Local C reference runners, generated
 outputs and regeneration instructions are in [reference/README.md](reference/README.md).
 
@@ -16,6 +15,11 @@ Run the ported suite without Ceph tools or a cluster:
 ```sh
 cargo test -p rados --test crush --offline
 ```
+
+To check a newer Ceph release, pin its source commit and tools, regenerate the
+reference data with the scripts in `reference/`, then run this offline suite.
+Keep a new release-specific fixture only when its bytes or expected placement
+differs; otherwise verify and reuse the existing one.
 
 ## Ported tests
 
@@ -161,5 +165,6 @@ original `SOMETHING` write remains task9 scope.
 
 CRUSH editor/compiler/formatter and monitor/balancer tests are not native
 client API ports. Their resulting maps and placement effects still need
-client coverage. Detailed per-test dispositions and source references are
-preserved in the [upstream inventory](../../../.notes/crush/test-parity-history.md#mapper-unit-tests).
+client coverage. The table above tracks the retained client-visible behavior;
+source and regeneration details stay beside each fixture in `fixtures/` and
+`reference/`.

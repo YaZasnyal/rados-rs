@@ -25,9 +25,7 @@ ordered vectors (including short results and NONE slots) and result-size
 histograms. Console formatting and the map-modified advisory are CLI-only
 and are not asserted. The helper checks the complete seed sequence and
 sample count and internal histogram consistency before invoking the mapper,
-so an early mapper failure cannot hide incomplete fixture data. See the
-[execution history](../../../../.notes/crush/test-parity-history.md#stage-2-mapper-fixes) for the original
-failures, mapper corrections and passing results.
+so an early mapper failure cannot hide incomplete fixture data.
 
 The original text maps `bad-mappings.crushmap.txt`, `set-choose.crushmap.txt`
 `test-map-firstn-indep.txt` and `show-choose-tries.txt` are also compiled by each pinned crushtool.

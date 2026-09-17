@@ -53,7 +53,7 @@ Cargo tests do not execute these helpers; they embed the generated
 [mapper-regressions.txt](mapper-regressions.txt),
 [mapper-retries.txt](mapper-retries.txt), and compiled maps stored here. Unmodified
 upstream maps and transcripts live in [fixtures](../fixtures); investigation
-notes live in [.notes/crush](../../../../.notes/crush).
+details needed to reproduce generated data stay in this directory.
 
 ## Pinned crushtool containers
 
@@ -157,7 +157,7 @@ the documented `choose_args_compat` setup, then re-encoded by its matching
 `ceph-dencoder type CrushWrapper ... set_features ... encode`. The feature
 masks are `CRUSH_TUNABLES5|INCARNATION_2` (`432345564227567616`) and that
 mask plus `CRUSH_CHOOSE_ARGS` (`432345564229664768`). Quincy uses the
-verified official-package dencoder documented in `.renchik/test-parity/reference-tools.md`.
+matching `ceph-dencoder` from the pinned official container.
 No Rust encoder produces these bytes. The enabled fixtures retain default
 index `-1`, one b1 position and weight `666 * 65536`; legacy fixtures contain
 no choose set and b1's base weight is `666 * 65536`.
