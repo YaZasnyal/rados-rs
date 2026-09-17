@@ -303,3 +303,15 @@ only prints diagnostics. `task-2-initial-focused.log` records 3 focused passes
 in 7.04s before any production change. The separately retained
 `task-2-reference-initial.log` is only a C/Rust audit-harness evolution mismatch
 while new C scenarios preceded their Rust comparison, never a behavior failure.
+
+### Review fix round 1
+
+The review found that Rust copied its legacy STRAW lengths into map fixtures but
+the audit discarded C's emitted arrays. `verify-reference.py` now captures both
+pinned C `STRAW` lines, reads the arrays from the executing audit-mode Rust
+maps, asserts equality, and preserves those C lines in its successful output.
+The original full-output digest check remains. `straw_zero`, `straw_same`, and
+`straw2_reweight` now cite both immutable source definitions; their setup and
+assertions are identical between Quincy and Tentacle. Focused test logs retain
+the two pre-existing `pgmap_types.rs` dead-code warnings as accepted unrelated
+noise; no production warning suppression changed.

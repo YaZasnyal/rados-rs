@@ -64,6 +64,17 @@ The published C/Rust digest pairs are `straw_zero` `12722a47fde289ef`,
 `65e72f17e5a64b0b`. The latter preserves the reference process/libc result
 `rand()%10 == 7`, so item 1 changes to `65536 / 10 * 7 == 45871`.
 
+The three weight tests have identical setup and assertions in both pinned
+releases: [`straw_zero` Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush.cc#L268) /
+[Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L709),
+[`straw_same` Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush.cc#L322) /
+[Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L763), and
+[`straw2_reweight` Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush.cc#L533) /
+[Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L974).
+The source audit found no setup or assertion difference. The successful C audit
+retains and compares the exact legacy STRAW lengths emitted by both builders
+with the arrays in the executing Rust maps.
+
 `CRUSHTest.straw2_stddev` remains Coverage: Not ported; Readiness: Ready now;
 Verification: Not run. It only prints diagnostics and supplies no acceptance
 assertion; revisit if upstream defines a pass criterion.

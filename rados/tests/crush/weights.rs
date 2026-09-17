@@ -100,8 +100,22 @@ fn report_audit(name: &str, detail: impl std::fmt::Display, hash: u64) {
     }
 }
 
+fn report_straws(name: &str, straws: &[u32]) {
+    if std::env::var_os("CRUSH_REFERENCE_AUDIT").is_some() {
+        let straws = straws
+            .iter()
+            .map(u32::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
+        println!("STRAW_RUST {name} straws={straws}");
+    }
+}
+
 // Upstream: v17.2.7/src/test/crush/crush.cc::CRUSHTest.straw_zero
 // Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush.cc#L268
+// Upstream: v20.2.4/src/test/crush/crush.cc::CRUSHTest.straw_zero
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L709
+// Setup and assertions are identical in the two pinned releases.
 // The exact STRAW lengths come from unmodified pinned builder.c with
 // straw_calc_version=1; reference/verify-reference.py regenerates them.
 #[test]
@@ -118,6 +132,7 @@ fn straw_zero() {
             unreachable!()
         };
         assert_eq!(straws, expected);
+        report_straws(if index == 0 { "zero0" } else { "zero1" }, straws);
     }
     let mut hash = 1_469_598_103_934_665_603;
     for x in 0..10_000 {
@@ -134,6 +149,9 @@ fn straw_zero() {
 
 // Upstream: v17.2.7/src/test/crush/crush.cc::CRUSHTest.straw_same
 // Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush.cc#L322
+// Upstream: v20.2.4/src/test/crush/crush.cc::CRUSHTest.straw_same
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L763
+// Setup and assertions are identical in the two pinned releases.
 // Exact lengths are captured from the pinned legacy STRAW builder, not inferred
 // from the Rust mapper.
 #[test]
@@ -164,6 +182,7 @@ fn straw_same() {
             unreachable!()
         };
         assert_eq!(straws, expected);
+        report_straws(if index == 0 { "same0" } else { "same1" }, straws);
     }
     let mut hash = 1_469_598_103_934_665_603;
     let mut different = 0;
@@ -182,6 +201,9 @@ fn straw_same() {
 
 // Upstream: v17.2.7/src/test/crush/crush.cc::CRUSHTest.straw2_reweight
 // Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush.cc#L533
+// Upstream: v20.2.4/src/test/crush/crush.cc::CRUSHTest.straw2_reweight
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L974
+// Setup and assertions are identical in the two pinned releases.
 // Pinned C's unseeded process RNG reports rand()%10 == 7 on the reference
 // platform, so the original integer-divided changed weight is 45,871.
 #[test]

@@ -6,6 +6,7 @@ Requires git, clang, rustc and the two commits in the Ceph checkout.
 """
 from pathlib import Path
 import os
+import re
 import subprocess as sp
 import sys
 import tempfile
@@ -82,9 +83,22 @@ with tempfile.TemporaryDirectory(prefix="crush-functional-reference-") as tempor
                              text=True, env=environment)
     rust_weights = sorted("WEIGHTS " + line.split("WEIGHTS ", 1)[1]
                           for line in output.splitlines() if "WEIGHTS " in line)
+    rust_straws = {
+        match.group(1): match.group(2)
+        for line in output.splitlines()
+        if (match := re.search(r"STRAW_RUST (zero[01]|same[01]) straws=([0-9,]+)", line))
+    }
     c_weights = sorted(line for line in outputs["tentacle"] if line.startswith("WEIGHTS "))
+    c_straws = {
+        name: straws
+        for line in outputs["tentacle"] if line.startswith("STRAW ")
+        for name, straws in re.findall(r"(zero[01]|same[01]) weights=[0-9,]+ straws=([0-9,]+)", line)
+    }
     assert rust_weights == c_weights, f"Rust/Tentacle weight mapping mismatch: {rust_weights!r} != {c_weights!r}"
+    assert rust_straws == c_straws, f"Rust/Tentacle STRAW lengths mismatch: {rust_straws!r} != {c_straws!r}"
     assert c_weights == sorted(line for line in outputs["quincy"] if line.startswith("WEIGHTS "))
+    assert [line for line in outputs["quincy"] if line.startswith("STRAW ")] == \
+        [line for line in outputs["tentacle"] if line.startswith("STRAW ")]
     quincy_indep = [line for line in outputs["quincy"] if line.startswith("INDEP ")]
     tentacle_indep = [line for line in outputs["tentacle"] if line.startswith("INDEP ")]
     assert quincy_indep == tentacle_indep
@@ -112,6 +126,8 @@ with tempfile.TemporaryDirectory(prefix="crush-functional-reference-") as tempor
     print("All 3,007 MSR vectors match Tentacle; all five device counts match both releases.")
     print("Both bad-mappings vectors and the STRAW builder setup match both releases.")
     print("All STRAW/STRAW2 output digests match both releases; unseeded rand()%10 is 7.")
+    print("Pinned C STRAW lengths match the executing Rust fixtures.")
     print("Raw rule type 123 and Erasure type 3 match exactly for every Quincy INDEP vector.")
     print("\n".join(quincy_indep))
+    print("\n".join(line for line in outputs["quincy"] if line.startswith("STRAW ")))
     print("\n".join(shared))
