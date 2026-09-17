@@ -688,3 +688,57 @@ fn three_replica_weight_distribution() {
 fn one_replica_weight_distribution() {
     assert!((-10_000..=10_000).contains(&weight_distribution_deviation(1)));
 }
+
+// Upstream (cmd-02/cmd-03 are locally assigned):
+// v17.2.7/src/test/cli/crushtool/bad-mappings.t::cmd-02,cmd-03
+// Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/bad-mappings.t#L2
+// v20.2.4/src/test/cli/crushtool/bad-mappings.t::cmd-02,cmd-03
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/bad-mappings.t#L2
+#[test]
+fn bad_mappings() {
+    // Exact topology from fixtures/bad-mappings.crushmap.txt. The compiler
+    // starts with legacy tunables; equal STRAW weights produce 0x10000 straws.
+    let mut map = CrushMap::new();
+    map.max_devices = 5;
+    map.max_buckets = 1;
+    map.max_rules = 2;
+    map.buckets = vec![Some(CrushBucket {
+        id: -1,
+        bucket_type: 1,
+        alg: BucketAlgorithm::Straw,
+        hash: 0,
+        weight: 5 * WEIGHT,
+        size: 5,
+        items: (0..5).collect(),
+        data: BucketData::Straw {
+            item_weights: vec![WEIGHT; 5],
+            straws: vec![WEIGHT; 5],
+        },
+    })];
+    map.rules = [
+        (RuleType::Replicated, RuleOp::ChooseFirstN),
+        (RuleType::Erasure, RuleOp::ChooseIndep),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(id, (rule_type, op))| {
+        Some(CrushRule {
+            rule_id: id as u32,
+            rule_type,
+            steps: vec![
+                step(RuleOp::Take, -1, 0),
+                step(op, 0, 0),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        })
+    })
+    .collect();
+    for (rule_id, expected) in [
+        (0, &[4, 0, 2, 3, 1][..]),
+        (1, &[4, 0, 2, 1, 3, NONE, NONE, NONE, NONE, NONE][..]),
+    ] {
+        let mut out = Vec::new();
+        crush_do_rule(&map, rule_id, 1, &mut out, 10, &[WEIGHT; 5]).unwrap();
+        assert_eq!(out, expected, "rule {rule_id}");
+    }
+}

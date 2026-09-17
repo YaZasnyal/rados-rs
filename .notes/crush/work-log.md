@@ -105,3 +105,64 @@ The old corpus integration test's successful return when input is absent
 must not count as an executed compatibility gate. Uniform/list/tree and
 full OSDMap placement still need their listed coverage. Passing these six
 tests does not close those gaps.
+
+## Continuation after 94ecb01 — 2026-09-17
+
+Started point 3 with the placement assertions in `bad-mappings.t`. The initial
+offline suite passed all 53 tests. No local crushtool or Ceph container image
+was available, so compiled binary fixtures remain pending. For this one-bucket,
+equal-weight case, direct assembly preserves the mapper input without needing
+a compiler; the unmodified C builder verifies the STRAW lengths independently.
+
+### Source review and adaptation
+
+Used `git show` at both pinned commits above to read the complete
+`src/test/cli/crushtool/bad-mappings.t` and `bad-mappings.crushmap.txt`.
+`git diff <Quincy> <Tentacle> -- src/test/cli/crushtool/{bad-mappings.t,bad-mappings.crushmap.txt,set-choose.t,set-choose.crushmap.txt,test-map-firstn-indep.t,test-map-firstn-indep.txt}`
+confirmed all six inputs/transcripts are unchanged. A byte comparison of
+both imported files also passed; hashes and immutable source links are in
+the fixtures README. The archived inventory remains the broader search record.
+
+Read `CrushCompiler.cc::compile` and bucket parsing, both releases'
+`CrushWrapper.h::set_tunables_argonaut/legacy`, and
+`builder.c::crush_calc_straw/crush_make_straw_bucket` (unchanged between
+the references). Compiler defaults are local tries 2, fallback 5, total 19,
+descend_once/vary_r/stable 0, straw_calc_version 0. All five equal unit-weight
+items have straw length 65536. Rule IDs 0/1, replicated/erasure types,
+TAKE(-1), CHOOSE_FIRSTN/INDEP(0, osd), EMIT, seed 1 and ten replicas are retained.
+
+`functional::bad_mappings` covers both locally named cmd-02/cmd-03 placement
+cases. Expected vectors are copied from the original transcript, including
+the FIRSTN short result and all five trailing INDEP NONE slots. The map is
+assembled directly; names, compiler output, CLI formatting and temporary-file
+cleanup are not exercised. Binary decoding remains an explicit coverage gap.
+No Rust production code changed; the new test passed on its first execution.
+
+The existing audit runner now links unmodified `builder.c` and `crush.c`
+alongside mapper/hash, calls the original STRAW constructor and checks each
+straw. Its two ordered outputs agree with both the Rust port and the original
+transcript for both references. No generated data or C implementation is
+vendored; only the two original upstream fixtures were added.
+
+### Validation and remaining work
+
+- `cargo test -p rados --test crush functional::bad_mappings --offline`:
+  1 passed, covering both original mapping commands.
+- `cargo test -p rados --test crush --offline`: 54 passed, none ignored.
+- `python3 rados/tests/crush/reference/verify-reference.py ../ceph`: passed;
+  two bad-mappings vectors and STRAW construction match both references;
+  existing 3,007 MSR vectors and both million-seed distribution comparisons
+  also remain passing.
+- `cargo fmt --all -- --check` and `git diff --check`: passed.
+- `cargo clippy --workspace --all-targets --all-features --offline -- --no-deps -D warnings`:
+  blocked by the same two pre-existing unused `OSD_STAT_INTERFACES_*` constants
+  in `rados/src/osdclient/pgmap_types.rs`.
+- `cargo clippy -p rados --lib --test crush --offline -- -D warnings -A dead-code`:
+  passed; no lint configuration changed.
+
+Next: obtain pinned crushtool binaries for `set-choose`, `test-map-firstn-indep`
+and bad-mappings decode coverage. Preserve all 36,864 set-choose vectors,
+six rules, three weight profiles and both replica counts. Known ignored local
+retry overrides and nonpositive `SetChooseTries` semantics remain separate
+mapper regressions to add. Quincy-specific unit cases and STRAW/STRAW2 weight
+scenarios, point 4 interfaces and point 5 OSDMap/live gates remain open.

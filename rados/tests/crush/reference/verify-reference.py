@@ -1,4 +1,4 @@
-"""Audit six new ports against pinned C sources; not required by Cargo tests.
+"""Audit functional ports against pinned C sources; not required by Cargo tests.
 
 Run from the repository root after cargo test -p rados --test crush:
     python3 rados/tests/crush/reference/verify-reference.py ../ceph
@@ -23,16 +23,18 @@ with tempfile.TemporaryDirectory(prefix="crush-functional-reference-") as tempor
     for release, revision in refs.items():
         dest = root / release
         (dest / "include").mkdir(parents=True)
-        for name in ("mapper.c", "mapper.h", "hash.c", "hash.h", "crush.h",
-                     "crush_ln_table.h", "crush_compat.h", "../include/int_types.h"):
+        (dest / "crush").mkdir()
+        for name in ("crush/mapper.c", "crush/mapper.h", "crush/hash.c", "crush/hash.h",
+                     "crush/crush.h", "crush/crush_ln_table.h", "crush/crush_compat.h",
+                     "crush/builder.c", "crush/builder.h", "crush/crush.c", "include/int_types.h"):
             data = sp.check_output(["git", "-C", str(ceph), "show",
-                                    f"{revision}:src/crush/{name}" if not name.startswith("..")
-                                    else f"{revision}:src/include/int_types.h"])
-            (dest / ("include/int_types.h" if name.startswith("..") else name)).write_bytes(data)
+                                    f"{revision}:src/{name}"])
+            (dest / name).write_bytes(data)
         (dest / "acconfig.h").touch()
-        command = ["clang", "-std=gnu99", "-O2", f"-I{dest}",
-                   str(reference / "reference-check.c"), str(dest / "mapper.c"),
-                   str(dest / "hash.c"), "-o", str(dest / "run")]
+        command = ["clang", "-std=gnu99", "-O2", f"-I{dest}", f"-I{dest / 'crush'}",
+                   str(reference / "reference-check.c"), str(dest / "crush/mapper.c"),
+                   str(dest / "crush/hash.c"), str(dest / "crush/builder.c"),
+                   str(dest / "crush/crush.c"), "-lm", "-o", str(dest / "run")]
         if release == "quincy":
             command.append("-DQUINCY")
         sp.run(command, check=True)
@@ -43,6 +45,8 @@ with tempfile.TemporaryDirectory(prefix="crush-functional-reference-") as tempor
     source = source.replace("    out\n}",
         '    println!("ORACLE devices={} x={x} count={count} weights={weights:?} out={out:?}", map.max_devices);\n    out\n}', 1)
     source = source.replace("    // bc scale=5", '    println!("COUNTS replicas={replicas} {counts:?}");\n    // bc scale=5', 1)
+    source = source.replace('        assert_eq!(out, expected, "rule {rule_id}");',
+        '        println!("BAD_MAPPINGS rule={rule_id} out={out:?}");\n        assert_eq!(out, expected, "rule {rule_id}");', 1)
     (root / "functional.rs").write_text(source)
     deps = repo / "target/debug/deps"
     rlib = max(deps.glob("librados-*.rlib"), key=lambda p: p.stat().st_mtime)
@@ -50,16 +54,18 @@ with tempfile.TemporaryDirectory(prefix="crush-functional-reference-") as tempor
             "-L", f"dependency={deps}", "--extern", f"rados={rlib}",
             "-o", str(root / "rust-tests")], check=True)
     actual = []
-    for selection in ("msr_", "weight_distribution"):
+    for selection in ("msr_", "weight_distribution", "bad_mappings"):
         output = sp.check_output([str(root / "rust-tests"), selection,
                                   "--nocapture", "--test-threads=1"], text=True)
         for line in output.splitlines():
-            for marker in ("ORACLE ", "COUNTS "):
+            for marker in ("ORACLE ", "COUNTS ", "BAD_MAPPINGS "):
                 if marker in line:
                     actual.append(marker + line.split(marker, 1)[1])
     assert sum(line.startswith("ORACLE ") for line in actual) == 3007
+    assert sum(line.startswith("BAD_MAPPINGS ") for line in actual) == 2
     assert sorted(actual) == sorted(outputs["tentacle"]), "Rust/Tentacle mismatch"
-    counts = sorted(line for line in actual if line.startswith("COUNTS "))
-    assert counts == sorted(outputs["quincy"]), "Quincy/Tentacle counts mismatch"
+    shared = sorted(line for line in actual if not line.startswith("ORACLE "))
+    assert shared == sorted(outputs["quincy"]), "Quincy/Tentacle mismatch"
     print("All 3,007 MSR vectors match Tentacle; all five device counts match both releases.")
-    print("\n".join(counts))
+    print("Both bad-mappings vectors and the STRAW builder setup match both releases.")
+    print("\n".join(shared))

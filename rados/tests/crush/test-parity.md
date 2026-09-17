@@ -19,7 +19,7 @@ cargo test -p rados --test crush --offline
 
 ## Ported tests
 
-**53 tests pass, none ignored.** These establish the scenarios below, not
+**54 tests pass, none ignored.** These establish the scenarios below, not
 complete CRUSH or end-to-end client compatibility.
 
 | Family | Ceph coverage retained | Rust tests | Status |
@@ -28,6 +28,7 @@ complete CRUSH or end-to-end client compatibility.
 | FIRSTN/INDEP, Tentacle | Seven scenarios per family, each in NORMAL and MSR mode: 28 variants | [functional.rs](functional.rs) | Passing |
 | Dedicated MSR topologies, Tentacle | Four scenarios: host/OSD failure, truncated fanout, EC 8+6 and two roots | [functional.rs](functional.rs) | Passing; 3,007 ordered vectors also compared with the C mapper |
 | Weight distribution, both releases | Both `crush_weights.sh` assertions, each over seeds 1..1,000,000 with the original thresholds | [functional.rs](functional.rs) | Passing; device counts also compared with both C mappers |
+| Insufficient mappings, both releases | `bad-mappings.t` rules 0/1, seed 1, ten replicas: exact FIRSTN short result and INDEP NONE slots | [functional.rs](functional.rs) `bad_mappings` | Passing; both vectors and equal-weight STRAW construction checked with pinned C sources |
 | Additional mapper regressions | Seven local tests, including 11,200 vectors generated from pinned C mappers | [regressions.rs](regressions.rs) | Passing; additional coverage, not upstream test ports |
 
 The golden scenarios are `bobtail_tunables`, `firefly_tunables`,
@@ -57,6 +58,18 @@ rules containing CHOOSE_MSR, malformed MSR blocks, EMIT reset, truncated MSR
 fanout, and safe rejection of negative MSR fanout. The C oracle supplies
 expectations; negative fanout is a separate Rust validation contract.
 
+`bad-mappings.t::cmd-02/cmd-03` (locally assigned command IDs) have
+Coverage: Ported for placement, Readiness: Ready now, Verification: Passing.
+The unmodified text map and transcript are in [fixtures](fixtures/README.md).
+The test directly assembles the original bucket, rule IDs/types/steps, weights
+and legacy tunables. Pinned C builders verify the equal-weight STRAW lengths;
+both C mappers agree with the original expected vectors. No production change
+was needed. The overall CLI scenario has Coverage: Partial: compilation,
+temporary-file cleanup and console formatting are outside the client API;
+binary-map decoding remains unverified until a pinned crushtool is available.
+Names are omitted from the assembled map because neither rule uses name lookup.
+Disposition review: Pending.
+
 ## Remaining work
 
 This is the continuation order. “Not ported” does not mean unsupported;
@@ -65,7 +78,7 @@ This is the continuation order. “Not ported” does not mean unsupported;
 | Order | Tests / behavior | Status and prerequisite |
 | --- | --- | --- |
 | 3 | Remaining Quincy mapper cases, STRAW zero/perturbed weights, STRAW2 reweight | Not ported; capture original setup and RNG outcome; explicitly resolve Quincy test-only rule type 123 |
-| 3 | `set-choose`, `firstn/indep`, and `bad-mappings` CLI regressions | Not ported; prepare binary versions of the upstream text maps |
+| 3 | `set-choose` and `firstn/indep` CLI regressions; binary decoding of `bad-mappings` | Prepare binary versions of the upstream text maps; `bad-mappings` placement is ported through direct assembly |
 | 3 | Zero/nonpositive rule retry settings | Add local C-reference regressions; local retry overrides and `SetChooseTries=0` currently differ from Ceph |
 | 4 | Choose arguments: positional weights/IDs and legacy encoding fallback | Missing support: decoder discards choose arguments; import `choose_args_compat` and CLI fixtures after retaining/selecting them |
 | 4 | Device-class shadow mapping, hierarchy/location queries, retry counters | Incomplete coverage; import class maps and implement the missing query/observation APIs |

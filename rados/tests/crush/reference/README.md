@@ -2,12 +2,13 @@
 
 These programs are written for rados-rs. They are **not copied Ceph tests**
 and do not implement CRUSH. They construct inputs and link the unmodified
-`src/crush/mapper.c` and `hash.c` from the pinned Ceph commits.
+`src/crush/mapper.c` and `hash.c` from the pinned Ceph commits. The functional
+runner also links `builder.c` and `crush.c` to verify STRAW construction.
 
 | Program | Purpose and input origin |
 | --- | --- |
 | [mapper-regressions.c](mapper-regressions.c) | Generates local regression scenarios, not named upstream tests. Reproduction and output provenance: [generated mapper regressions](#generated-mapper-regressions). |
-| [reference-check.c](reference-check.c) | Recreates the four dedicated Tentacle MSR test setups and the shared `crush_weights.sh` input; prints C results for comparison with the Rust ports. |
+| [reference-check.c](reference-check.c) | Recreates the four dedicated Tentacle MSR test setups, the shared `crush_weights.sh` input and both `bad-mappings.t` cases; prints C results for comparison with the Rust ports. |
 | [verify-reference.py](verify-reference.py) | Extracts pinned Ceph sources into a temporary directory, builds the C runner, and compares its results with an instrumented temporary copy of the Rust tests. |
 
 For the functional reference comparison, run from the repository root:
@@ -22,6 +23,14 @@ Quincy `b12291d110049b2f35e32e0de30d70e9a4c060d2` and Tentacle
 `7f793731f1b39eb4f465e960113d2363c311b964`. It leaves that checkout unchanged.
 No Ceph mapper source is vendored here; only an empty generated `acconfig.h`
 is added during the standalone C build.
+
+For `bad-mappings`, the C runner uses the original text map's five devices,
+unit weights, STRAW root -1/type 1, hash 0, and rule IDs 0/1 (replicated
+FIRSTN and erasure INDEP). It applies the compiler's legacy tunables and calls
+the pinned `crush_make_straw_bucket`, asserting all five straws equal 65536.
+The audit compares both seed-1/ten-replica results with the actual Rust test,
+which asserts the upstream transcript's complete ordered vectors. This checks
+placement and builder setup, not the text compiler or binary decoder.
 
 Cargo tests do not execute these helpers; they embed the generated
 [mapper-regressions.txt](mapper-regressions.txt) stored here. Unmodified

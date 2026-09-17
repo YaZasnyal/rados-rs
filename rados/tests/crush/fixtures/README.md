@@ -1,20 +1,22 @@
 # Ceph CRUSH golden fixtures
 
-All `.crushmap` and `.t` files here are unmodified copies of
+All `.crushmap`, `.crushmap.txt` and `.t` files here are unmodified copies of
 `src/test/cli/crushtool/` from both pinned releases:
 
 - v17.2.7: `b12291d110049b2f35e32e0de30d70e9a4c060d2`
 - v20.2.4: `7f793731f1b39eb4f465e960113d2363c311b964`
 
 Every imported file was compared byte for byte across these commits. One
-copy serves both releases; this is 87,040 distinct expected mappings, not
-174,080 independent cases. Expected results come from the committed Ceph
+copy serves both releases. The twelve original golden transcripts contain
+87,040 distinct expected mappings, not 174,080 independent cases;
+`bad-mappings.t` adds two ordered vectors. Expected results come from the committed Ceph
 transcripts, never from the Rust implementation. No external tools or local
 paths are needed to run `cargo test -p rados --test crush --offline`.
 Locally generated regression data and their provenance live in
 [reference](../reference/README.md#generated-mapper-regressions).
 
-The first line of each `.t` retains the original crushtool command. Rust
+The first line of each `.t` retains the original crushtool command. For the
+twelve original golden transcripts, Rust
 loads the referenced binary map, applies those tunables and OSD weights,
 executes the same rule for every seed and replica count, and checks exact
 ordered vectors (including short results and NONE slots) and result-size
@@ -24,6 +26,13 @@ sample count and internal histogram consistency before invoking the mapper,
 so an early mapper failure cannot hide incomplete fixture data. See the
 [execution history](../../../../.notes/crush/test-parity-history.md#stage-2-mapper-fixes) for the original
 failures, mapper corrections and passing results.
+
+`bad-mappings.crushmap.txt` is preserved unchanged as the setup reference for
+`functional::bad_mappings`; its single STRAW bucket and two rules are assembled
+directly in Rust. `bad-mappings.t` supplies both literal expected vectors.
+The [C reference runner](../reference/README.md) independently checks the setup
+and both outputs against each release. No binary fixture has been generated
+for this map, so its compiler/decoder path is not covered by this port.
 
 Provenance: paths in the table are relative to `src/test/cli/crushtool/`;
 links point to the exact releases above. Adaptations to fixture bytes: none.
@@ -37,6 +46,8 @@ does not replace it.
 
 | File | Source v17.2.7 / v20.2.4 | SHA256 |
 | --- | --- | --- |
+| `bad-mappings.crushmap.txt` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/bad-mappings.crushmap.txt) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/bad-mappings.crushmap.txt) | `7769a2304e7a81b864deb9e10eb550b882e12cb3093467f6c612f3a949bcbeeb` |
+| `bad-mappings.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/bad-mappings.t) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/bad-mappings.t) | `1abb4d051849b501d5ab2ade6e869fc1e56105ac1e21a9b4421ec9bae463cfa4` |
 | `test-map-a.crushmap` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-a.crushmap) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-a.crushmap) | `3eacd04c60fa0143e298c49f6609a5b405fc01fc668f80386da28a8ea40781ca` |
 | `test-map-bobtail-tunables.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-bobtail-tunables.t) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-bobtail-tunables.t) | `49302596753ab66180af0c2e06761bd5e59763f01df60730a5b5e122bd8fbc86` |
 | `test-map-firefly-tunables.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-firefly-tunables.t) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-firefly-tunables.t) | `cc296abd018b76820566c6ae448108b945c00fb57892ed923b26d006628b3b94` |

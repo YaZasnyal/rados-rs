@@ -1,8 +1,9 @@
-/* Audit runner for the six functional ports added after d1f0dc8.
- * Link unmodified pinned Ceph mapper.c/hash.c; see verify-reference.py.
+/* Audit runner for the MSR, distribution and bad-mappings functional ports.
+ * Link unmodified pinned Ceph mapper/hash/builder/crush.c; see verify-reference.py.
  * This reproduces test inputs, not the mapper algorithm.
  */
 #include "mapper.h"
+#include "builder.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -142,6 +143,49 @@ static void distribution(int count)
     free(rule);
 }
 
+static void bad_mappings(void)
+{
+    /* Original bad-mappings.crushmap.txt, with CrushCompiler's legacy defaults. */
+    struct crush_map *m = crush_create();
+    assert(m);
+    m->choose_local_tries = 2;
+    m->choose_local_fallback_tries = 5;
+    m->choose_total_tries = 19;
+    m->chooseleaf_descend_once = 0;
+    m->chooseleaf_vary_r = 0;
+    m->chooseleaf_stable = 0;
+    m->straw_calc_version = 0;
+    int devices[] = {0, 1, 2, 3, 4};
+    int item_weights[] = {W, W, W, W, W};
+    struct crush_bucket_straw *root = crush_make_straw_bucket(m, 0, 1, 5,
+                                                             devices, item_weights);
+    assert(root);
+    for (int i = 0; i < 5; ++i) assert(root->straws[i] == W);
+    assert(crush_add_bucket(m, -1, &root->h, NULL) == 0);
+    for (int id = 0; id < 2; ++id) {
+        struct crush_rule *r = crush_make_rule(3, id == 0 ? 1 : 3);
+        assert(r);
+        crush_rule_set_step(r, 0, CRUSH_RULE_TAKE, -1, 0);
+        crush_rule_set_step(r, 1, id == 0 ? CRUSH_RULE_CHOOSE_FIRSTN : CRUSH_RULE_CHOOSE_INDEP, 0, 0);
+        crush_rule_set_step(r, 2, CRUSH_RULE_EMIT, 0, 0);
+        assert(crush_add_rule(m, r, id) == id);
+    }
+    crush_finalize(m);
+    void *workspace = calloc(1, crush_work_size(m, 10));
+    assert(workspace);
+    crush_init_workspace(m, workspace);
+    unsigned weights[] = {W, W, W, W, W};
+    for (int id = 0; id < 2; ++id) {
+        int out[10];
+        int n = crush_do_rule(m, id, 1, out, 10, weights, 5, workspace, NULL);
+        printf("BAD_MAPPINGS rule=%d out=[", id);
+        for (int i = 0; i < n; ++i) printf("%s%d", i ? ", " : "", out[i]);
+        puts("]");
+    }
+    free(workspace);
+    crush_destroy(m);
+}
+
 int main(void)
 {
 #ifndef QUINCY
@@ -152,4 +196,5 @@ int main(void)
 #endif
     distribution(1);
     distribution(3);
+    bad_mappings();
 }
