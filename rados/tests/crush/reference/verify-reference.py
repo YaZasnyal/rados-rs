@@ -5,6 +5,7 @@ Run from the repository root after cargo test -p rados --test crush:
 Requires git, clang, rustc and the two commits in the Ceph checkout.
 """
 from pathlib import Path
+import os
 import subprocess as sp
 import sys
 import tempfile
@@ -63,9 +64,54 @@ with tempfile.TemporaryDirectory(prefix="crush-functional-reference-") as tempor
                     actual.append(marker + line.split(marker, 1)[1])
     assert sum(line.startswith("ORACLE ") for line in actual) == 3007
     assert sum(line.startswith("BAD_MAPPINGS ") for line in actual) == 2
-    assert sorted(actual) == sorted(outputs["tentacle"]), "Rust/Tentacle mismatch"
+    mapper_outputs = [line for line in outputs["tentacle"]
+                      if line.startswith(("ORACLE ", "COUNTS ", "BAD_MAPPINGS "))]
+    assert sorted(actual) == sorted(mapper_outputs), "Rust/Tentacle mismatch"
     shared = sorted(line for line in actual if not line.startswith("ORACLE "))
-    assert shared == sorted(outputs["quincy"]), "Quincy/Tentacle mismatch"
+    quincy_shared = [line for line in outputs["quincy"]
+                     if line.startswith(("COUNTS ", "BAD_MAPPINGS "))]
+    assert shared == sorted(quincy_shared), "Quincy/Tentacle mismatch"
+
+    weight_source = root / "weights.rs"
+    weight_source.write_text((repo / "rados/tests/crush/weights.rs").read_text())
+    sp.run(["rustc", "--edition=2024", "--test", str(weight_source),
+            "-L", f"dependency={deps}", "--extern", f"rados={rlib}",
+            "-o", str(root / "rust-weights")], check=True)
+    environment = os.environ | {"CRUSH_REFERENCE_AUDIT": "1"}
+    output = sp.check_output([str(root / "rust-weights"), "--nocapture", "--test-threads=1"],
+                             text=True, env=environment)
+    rust_weights = sorted("WEIGHTS " + line.split("WEIGHTS ", 1)[1]
+                          for line in output.splitlines() if "WEIGHTS " in line)
+    c_weights = sorted(line for line in outputs["tentacle"] if line.startswith("WEIGHTS "))
+    assert rust_weights == c_weights, f"Rust/Tentacle weight mapping mismatch: {rust_weights!r} != {c_weights!r}"
+    assert c_weights == sorted(line for line in outputs["quincy"] if line.startswith("WEIGHTS "))
+    quincy_indep = [line for line in outputs["quincy"] if line.startswith("INDEP ")]
+    tentacle_indep = [line for line in outputs["tentacle"] if line.startswith("INDEP ")]
+    assert quincy_indep == tentacle_indep
+    source = source.replace("    out\n}\n\nfn assert_no_duplicates",
+        '    println!("INDEP_RUST out={out:?}");\n    out\n}\n\nfn assert_no_duplicates', 1)
+    (root / "functional-indep.rs").write_text(source)
+    sp.run(["rustc", "--edition=2024", "--test", str(root / "functional-indep.rs"),
+            "-L", f"dependency={deps}", "--extern", f"rados={rlib}",
+            "-o", str(root / "rust-indep")], check=True)
+    def word_digest(lines):
+        value = 1469598103934665603
+        for line in lines:
+            values = line.split("out=", 1)[1].strip()[1:-1]
+            items = [] if not values else [int(item.strip()) for item in values.split(",")]
+            for item in [len(items), *(item & 0xffffffff for item in items)]:
+                value = (value ^ item) * 1099511628211 & 0xffffffffffffffff
+        return f"{value:016x}"
+    expected_indep = {line.split()[1]: line.rsplit("=", 1)[1] for line in quincy_indep}
+    for case in ("toosmall", "basic", "out_alt", "out_contig", "out_progressive"):
+        output = sp.check_output([str(root / "rust-indep"), f"indep_{case}_normal",
+                                  "--nocapture", "--test-threads=1"], text=True)
+        rust_lines = [line for line in output.splitlines() if "INDEP_RUST " in line]
+        assert word_digest(rust_lines) == expected_indep[case], \
+            f"Rust/{case} mismatch: {word_digest(rust_lines)} != {expected_indep[case]} ({len(rust_lines)} vectors)"
     print("All 3,007 MSR vectors match Tentacle; all five device counts match both releases.")
     print("Both bad-mappings vectors and the STRAW builder setup match both releases.")
+    print("All STRAW/STRAW2 output digests match both releases; unseeded rand()%10 is 7.")
+    print("Raw rule type 123 and Erasure type 3 match exactly for every Quincy INDEP vector.")
+    print("\n".join(quincy_indep))
     print("\n".join(shared))

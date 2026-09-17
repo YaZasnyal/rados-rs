@@ -8,3 +8,6 @@ mod functional;
 
 #[path = "crush/regressions.rs"]
 mod regressions;
+
+#[path = "crush/weights.rs"]
+mod weights;

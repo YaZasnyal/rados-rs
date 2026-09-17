@@ -19,7 +19,7 @@ cargo test -p rados --test crush --offline
 
 ## Ported tests
 
-**60 tests pass, none ignored.** These establish the scenarios below, not
+**63 tests pass, none ignored.** These establish the scenarios below, not
 complete CRUSH or end-to-end client compatibility.
 
 | Family | Ceph coverage retained | Rust tests | Status |
@@ -30,6 +30,8 @@ complete CRUSH or end-to-end client compatibility.
 | FIRSTN/INDEP, Tentacle | Seven scenarios per family, each in NORMAL and MSR mode: 28 variants | [functional.rs](functional.rs) | Passing |
 | Dedicated MSR topologies, Tentacle | Four scenarios: host/OSD failure, truncated fanout, EC 8+6 and two roots | [functional.rs](functional.rs) | Passing; 3,007 ordered vectors also compared with the C mapper |
 | Weight distribution, both releases | Both `crush_weights.sh` assertions, each over seeds 1..1,000,000 with the original thresholds | [functional.rs](functional.rs) | Passing; device counts also compared with both C mappers |
+| Quincy INDEP, mapping-only type adaptation | `indep_toosmall`, `indep_basic`, `indep_out_alt`, `indep_out_contig`, `indep_out_progressive`: original domains, holes, uniqueness and progressive movement | [functional.rs](functional.rs) existing NORMAL tests | Coverage: Ported; Readiness: Ready now; Verification: Passing. Raw type 123 equals Erasure type 3 for all 508 ordered C vectors; decoding raw 123 remains unported. |
+| Legacy STRAW / STRAW2 weights, Quincy | `straw_zero` (10,000), `straw_same` (100,000), `straw2_reweight` (1,000,000) | [weights.rs](weights.rs) | Coverage: Ported; Readiness: Ready now; Verification: Passing. C-built STRAW lengths, output digests and unseeded C RNG realization are recorded in the reference runner. |
 | Insufficient mappings, both releases | `bad-mappings.t` rules 0/1, seed 1, ten replicas: exact FIRSTN short result and INDEP NONE slots | [golden.rs](golden.rs) `bad_mappings_compiled`; [functional.rs](functional.rs) `bad_mappings` | Passing with both compiled map encodings and the earlier direct setup; same two upstream cases |
 | Additional mapper regressions | Eight local tests, including 12,600 vectors generated from pinned C mappers | [regressions.rs](regressions.rs) | Passing; additional coverage, not upstream test ports |
 
@@ -42,6 +44,29 @@ Both functional families cover `toosmall`, `basic`, `single_out_first`,
 `single_out_last`, `out_alt`, `out_contig`, and `out_progressive`. Tests retain
 upstream seed ranges, topology, failure transitions, holes, uniqueness,
 positional stability and movement bounds. Every test has a pinned source link.
+
+The five pre-existing NORMAL INDEP tests also port the Quincy names listed in
+the table. Quincy assigns the test-only raw rule type 123, which the decoder
+intentionally does not accept. `reference-check.c` constructs the exact map
+with raw 123 and type 3, compares every ordered output in the five complete
+domains (including 108 progressive failure transitions), then verifies matching
+per-case streaming digests in both pinned releases. The Rust tests therefore
+use the existing `RuleType::Erasure` only as this mapping adaptation; they do
+not exercise or claim raw-123 decoding.
+
+`weights.rs` retains each upstream assertion and every original sample count.
+For legacy STRAW, the pinned unmodified `builder.c` with `straw_calc_version=1`
+provides the ordered lengths. The C audit streams every ordered Rust/C output
+through a fixed word-FNV-1a digest: initialize `1469598103934665603`, then for
+each output XOR/multiply its length and each item as u32 by `1099511628211`.
+The published C/Rust digest pairs are `straw_zero` `12722a47fde289ef`,
+`straw_same` `32c9040dd1425108` (12 differences), and `straw2_reweight`
+`65e72f17e5a64b0b`. The latter preserves the reference process/libc result
+`rand()%10 == 7`, so item 1 changes to `65536 / 10 * 7 == 45871`.
+
+`CRUSHTest.straw2_stddev` remains Coverage: Not ported; Readiness: Ready now;
+Verification: Not run. It only prints diagnostics and supplies no acceptance
+assertion; revisit if upstream defines a pass criterion.
 
 The dedicated MSR ports are `msr_4_host_2_choose_rule`, `msr_2_host_2_osd`,
 `msr_5_host_8_6_ec_choose`, and `msr_multi_root`. The first three retain seed 0;
@@ -93,7 +118,7 @@ This is the continuation order. “Not ported” does not mean unsupported;
 
 | Order | Tests / behavior | Status and prerequisite |
 | --- | --- | --- |
-| 3 | Remaining Quincy mapper cases, STRAW zero/perturbed weights, STRAW2 reweight | Not ported; capture original setup and RNG outcome; explicitly resolve Quincy test-only rule type 123 |
+| 3 | Remaining Quincy mapper cases, STRAW zero/perturbed weights, STRAW2 reweight | Passing; five cases reuse their existing NORMAL ports after the raw-123/type-3 proof, and three assertion-bearing weight cases retain original setup/RNG outcome |
 | 3 | Zero/nonpositive rule retry settings | Passing; local C-reference cases retain positive, zero, negative and repeated override semantics for conventional FIRSTN and recursive chooseleaf |
 | 4 | Choose arguments: positional weights/IDs and legacy encoding fallback | Missing support: decoder discards choose arguments; import `choose_args_compat` and CLI fixtures after retaining/selecting them |
 | 4 | Device-class shadow mapping, hierarchy/location queries, retry counters | Incomplete coverage; import class maps and implement the missing query/observation APIs |

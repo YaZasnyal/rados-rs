@@ -5,6 +5,7 @@
 #include "mapper.h"
 #include "builder.h"
 #include <assert.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -186,6 +187,239 @@ static void bad_mappings(void)
     crush_destroy(m);
 }
 
+static uint64_t digest(uint64_t hash, int n, const int *out)
+{
+    hash ^= (unsigned)n;
+    hash *= UINT64_C(1099511628211);
+    for (int i = 0; i < n; ++i) {
+        hash ^= (unsigned)out[i];
+        hash *= UINT64_C(1099511628211);
+    }
+    return hash;
+}
+
+static struct crush_map *weight_map(int devices)
+{
+    struct crush_map *m = crush_create();
+    assert(m);
+    m->max_devices = devices;
+    m->choose_local_tries = 0;
+    m->choose_local_fallback_tries = 0;
+    m->choose_total_tries = 50;
+    m->chooseleaf_descend_once = 1;
+    m->chooseleaf_vary_r = 1;
+    m->chooseleaf_stable = 1;
+    m->straw_calc_version = 1;
+    return m;
+}
+
+static int add_weight_root(struct crush_map *m, int algorithm, int type, int size,
+                           int *device_ids, int *weights)
+{
+    struct crush_bucket *root = crush_make_bucket(m, algorithm, 0, type, size,
+                                                   device_ids, weights);
+    assert(root);
+    int id;
+    assert(crush_add_bucket(m, 0, root, &id) == 0);
+    return id;
+}
+
+static void add_weight_rule(struct crush_map *m, int id, int root)
+{
+    struct crush_rule *r = crush_make_rule(3, 1);
+    assert(r);
+    crush_rule_set_step(r, 0, CRUSH_RULE_TAKE, root, 0);
+    crush_rule_set_step(r, 1, CRUSH_RULE_CHOOSE_FIRSTN, 0, 0);
+    crush_rule_set_step(r, 2, CRUSH_RULE_EMIT, 0, 0);
+    assert(crush_add_rule(m, r, id) == id);
+}
+
+static void weight_setup(void)
+{
+    int ids[15], zero_weights[5], same0[10], same1[10];
+    for (int i = 0; i < 15; ++i) ids[i] = i;
+    for (int i = 0; i < 5; ++i) zero_weights[i] = (4-i)*W;
+    for (int i = 0; i < 10; ++i) {
+        same0[i] = W*((i+1)/2+1);
+        same1[i] = same0[i] + (i%2)*100;
+    }
+
+    struct crush_map *m = weight_map(5);
+    int root0 = add_weight_root(m, CRUSH_BUCKET_STRAW, 1, 5, ids, zero_weights);
+    int root1 = add_weight_root(m, CRUSH_BUCKET_STRAW, 1, 4, ids, zero_weights);
+    add_weight_rule(m, 0, root0);
+    add_weight_rule(m, 1, root1);
+    crush_finalize(m);
+    struct crush_bucket_straw *zero0 = (struct crush_bucket_straw *)m->buckets[-1-root0];
+    struct crush_bucket_straw *zero1 = (struct crush_bucket_straw *)m->buckets[-1-root1];
+    printf("STRAW zero0 weights=");
+    for (int i = 0; i < 5; ++i) printf("%s%u", i ? "," : "", zero0->item_weights[i]);
+    printf(" straws=");
+    for (int i = 0; i < 5; ++i) printf("%s%u", i ? "," : "", zero0->straws[i]);
+    printf(" zero1 weights=");
+    for (int i = 0; i < 4; ++i) printf("%s%u", i ? "," : "", zero1->item_weights[i]);
+    printf(" straws=");
+    for (int i = 0; i < 4; ++i) printf("%s%u", i ? "," : "", zero1->straws[i]);
+    puts("");
+    void *workspace = calloc(1, crush_work_size(m, 1));
+    crush_init_workspace(m, workspace);
+    unsigned reweight[5] = {W, W, W, W, W};
+    uint64_t hash = UINT64_C(1469598103934665603);
+    for (unsigned x = 0; x < 10000; ++x) {
+        int first[1], second[1];
+        int n0 = crush_do_rule(m, 0, x, first, 1, reweight, 5, workspace, NULL);
+        int n1 = crush_do_rule(m, 1, x, second, 1, reweight, 5, workspace, NULL);
+        assert(n0 == 1 && n1 == 1 && first[0] == second[0]);
+        hash = digest(hash, n0, first);
+        hash = digest(hash, n1, second);
+    }
+    printf("WEIGHTS straw_zero digest=%016llx\n", (unsigned long long)hash);
+    free(workspace);
+    crush_destroy(m);
+
+    m = weight_map(10);
+    root0 = add_weight_root(m, CRUSH_BUCKET_STRAW, 1, 10, ids, same0);
+    root1 = add_weight_root(m, CRUSH_BUCKET_STRAW, 1, 10, ids, same1);
+    add_weight_rule(m, 0, root0);
+    add_weight_rule(m, 1, root1);
+    crush_finalize(m);
+    struct crush_bucket_straw *straw0 = (struct crush_bucket_straw *)m->buckets[-1-root0];
+    struct crush_bucket_straw *straw1 = (struct crush_bucket_straw *)m->buckets[-1-root1];
+    printf("STRAW same0 weights=");
+    for (int i = 0; i < 10; ++i) printf("%s%u", i ? "," : "", straw0->item_weights[i]);
+    printf(" straws=");
+    for (int i = 0; i < 10; ++i) printf("%s%u", i ? "," : "", straw0->straws[i]);
+    printf(" same1 weights=");
+    for (int i = 0; i < 10; ++i) printf("%s%u", i ? "," : "", straw1->item_weights[i]);
+    printf(" straws=");
+    for (int i = 0; i < 10; ++i) printf("%s%u", i ? "," : "", straw1->straws[i]);
+    puts("");
+    workspace = calloc(1, crush_work_size(m, 1));
+    crush_init_workspace(m, workspace);
+    unsigned reweight10[10];
+    for (int i = 0; i < 10; ++i) reweight10[i] = W;
+    hash = UINT64_C(1469598103934665603);
+    int different = 0;
+    for (unsigned x = 0; x < 100000; ++x) {
+        int first[1], second[1];
+        int n0 = crush_do_rule(m, 0, x, first, 1, reweight10, 10, workspace, NULL);
+        int n1 = crush_do_rule(m, 1, x, second, 1, reweight10, 10, workspace, NULL);
+        assert(n0 == 1 && n1 == 1);
+        different += first[0] != second[0];
+        hash = digest(hash, n0, first);
+        hash = digest(hash, n1, second);
+    }
+    printf("WEIGHTS straw_same different=%d digest=%016llx\n", different, (unsigned long long)hash);
+    free(workspace);
+    crush_destroy(m);
+
+    int reweight_weights[] = {W, W, 2*W, 2*W, 3*W, 5*W, W/2, 2*W,
+                              W, W, 2*W, W, W, 2*W, 48*W};
+    m = weight_map(15);
+    root0 = add_weight_root(m, CRUSH_BUCKET_STRAW2, 1, 15, ids, reweight_weights);
+    int random = rand() % 10;
+    reweight_weights[1] = W / 10 * random;
+    root1 = add_weight_root(m, CRUSH_BUCKET_STRAW2, 1, 15, ids, reweight_weights);
+    add_weight_rule(m, 0, root0);
+    add_weight_rule(m, 1, root1);
+    crush_finalize(m);
+    workspace = calloc(1, crush_work_size(m, 1));
+    crush_init_workspace(m, workspace);
+    unsigned reweight15[15];
+    for (int i = 0; i < 15; ++i) reweight15[i] = W;
+    hash = UINT64_C(1469598103934665603);
+    for (unsigned x = 0; x < 1000000; ++x) {
+        int first[1], second[1];
+        int n0 = crush_do_rule(m, 0, x, first, 1, reweight15, 15, workspace, NULL);
+        int n1 = crush_do_rule(m, 1, x, second, 1, reweight15, 15, workspace, NULL);
+        assert(n0 == 1 && n1 == 1);
+        assert(first[0] == 1 || first[0] == second[0]);
+        hash = digest(hash, n0, first);
+        hash = digest(hash, n1, second);
+    }
+    printf("WEIGHTS straw2_reweight rand_mod_10=%d changed_weight=%d digest=%016llx\n",
+           random, reweight_weights[1], (unsigned long long)hash);
+    free(workspace);
+    crush_destroy(m);
+}
+
+static struct crush_map *indep_map(int racks, int hosts, int osds, int rule_type)
+{
+    int rack_ids[3], next = -2;
+    for (int rack = 0; rack < racks; ++rack) {
+        for (int host = 0; host < hosts; ++host) {
+            next--;
+            if (host == 0) rack_ids[rack] = next--;
+        }
+    }
+    struct crush_map *m = weight_map(racks * hosts * osds);
+    int root = add_weight_root(m, CRUSH_BUCKET_STRAW, 5, racks, rack_ids,
+                               (int[3]) {hosts*osds*W, hosts*osds*W, hosts*osds*W});
+    assert(root == -1);
+    int device = 0;
+    for (int rack = 0; rack < racks; ++rack) {
+        int host_ids[3], rack_id = 0;
+        for (int host = 0; host < hosts; ++host) {
+            int devices[3];
+            for (int osd = 0; osd < osds; ++osd) devices[osd] = device++;
+            host_ids[host] = add_weight_root(m, CRUSH_BUCKET_STRAW2, 1, osds, devices,
+                                              (int[3]) {W, W, W});
+            if (host == 0) rack_id = add_weight_root(m, CRUSH_BUCKET_STRAW2, 3, hosts, host_ids,
+                                                      (int[3]) {osds*W, osds*W, osds*W});
+        }
+        assert(rack_id == rack_ids[rack]);
+        /* Later host IDs are appended after their rack; root already owns IDs. */
+        struct crush_bucket *bucket = m->buckets[-1-rack_id];
+        for (int host = 0; host < hosts; ++host) bucket->items[host] = host_ids[host];
+    }
+    struct crush_rule *r = crush_make_rule(4, rule_type);
+    assert(r);
+    crush_rule_set_step(r, 0, CRUSH_RULE_SET_CHOOSELEAF_TRIES, 10, 0);
+    crush_rule_set_step(r, 1, CRUSH_RULE_TAKE, root, 0);
+    crush_rule_set_step(r, 2, CRUSH_RULE_CHOOSELEAF_INDEP, 0, 1);
+    crush_rule_set_step(r, 3, CRUSH_RULE_EMIT, 0, 0);
+    assert(crush_add_rule(m, r, 0) == 0);
+    crush_finalize(m);
+    return m;
+}
+
+static void indep_case(const char *name, int scenario)
+{
+    int racks = scenario == 0 ? 1 : 3;
+    int hosts = 3, osds = scenario == 0 ? 1 : 3;
+    struct crush_map *raw = indep_map(racks, hosts, osds, 123);
+    struct crush_map *mapped = indep_map(racks, hosts, osds, 3);
+    if (scenario >= 1) raw->choose_total_tries = mapped->choose_total_tries = 100;
+    void *raw_work = calloc(1, crush_work_size(raw, 9));
+    void *mapped_work = calloc(1, crush_work_size(mapped, 9));
+    crush_init_workspace(raw, raw_work);
+    crush_init_workspace(mapped, mapped_work);
+    uint64_t hash = UINT64_C(1469598103934665603);
+    unsigned vectors = 0;
+    for (unsigned x = scenario == 4 ? 1 : 0; x < (scenario == 4 ? 5 : 100); ++x) {
+        unsigned weights[27];
+        for (int i = 0; i < raw->max_devices; ++i) weights[i] = W;
+        if (scenario == 2) for (int i = 0; i < raw->max_devices / 2; ++i) weights[i*2] = 0;
+        if (scenario == 3) for (int i = 0; i < raw->max_devices / 3; ++i) weights[i] = 0;
+        int rounds = scenario == 4 ? raw->max_devices : 1;
+        for (int i = 0; i < rounds; ++i) {
+            int first[9], second[9];
+            int count = scenario == 0 ? 5 : scenario == 2 ? 9 : scenario >= 3 ? 7 : 5;
+            int n0 = crush_do_rule(raw, 0, x, first, count, weights, raw->max_devices, raw_work, NULL);
+            int n1 = crush_do_rule(mapped, 0, x, second, count, weights, mapped->max_devices, mapped_work, NULL);
+            assert(n0 == n1 && !memcmp(first, second, n0 * sizeof(*first)));
+            hash = digest(hash, n0, first);
+            ++vectors;
+            if (scenario == 4) weights[i] = 0;
+        }
+    }
+    printf("INDEP %s vectors=%u digest=%016llx\n", name, vectors, (unsigned long long)hash);
+    free(raw_work);
+    free(mapped_work);
+    crush_destroy(raw);
+    crush_destroy(mapped);
+}
+
 int main(void)
 {
 #ifndef QUINCY
@@ -197,4 +431,10 @@ int main(void)
     distribution(1);
     distribution(3);
     bad_mappings();
+    weight_setup();
+    indep_case("toosmall", 0);
+    indep_case("basic", 1);
+    indep_case("out_alt", 2);
+    indep_case("out_contig", 3);
+    indep_case("out_progressive", 4);
 }

@@ -346,6 +346,10 @@ macro_rules! variants {
     };
 }
 
+// Upstream: v17.2.7/src/test/crush/crush.cc::CRUSHTest.indep_toosmall (NORMAL)
+// Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush.cc#L115
+// Mapping-only adaptation: the source's undecodable test type 123 is equivalent
+// to Erasure type 3 for every source vector; verified by reference-check.c.
 // Upstream: v20.2.4/src/test/crush/crush.cc::IndepTest.toosmall (NORMAL, MSR)
 // Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L152
 variants!(
@@ -355,6 +359,9 @@ variants!(
     Family::Indep
 );
 
+// Upstream: v17.2.7/src/test/crush/crush.cc::CRUSHTest.indep_basic (NORMAL)
+// Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush.cc#L134
+// Mapping-only adaptation: source type 123 maps as Erasure after the C proof above.
 // Upstream: v20.2.4/src/test/crush/crush.cc::IndepTest.basic (NORMAL, MSR)
 // Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L171
 variants!(indep_basic_normal, indep_basic_msr, basic, Family::Indep);
@@ -377,6 +384,9 @@ variants!(
     Family::Indep
 );
 
+// Upstream: v17.2.7/src/test/crush/crush.cc::CRUSHTest.indep_out_alt (NORMAL)
+// Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush.cc#L153
+// Mapping-only adaptation: source type 123 maps as Erasure after the C proof above.
 // Upstream: v20.2.4/src/test/crush/crush.cc::IndepTest.out_alt (NORMAL, MSR)
 // Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L271
 variants!(
@@ -386,6 +396,9 @@ variants!(
     Family::Indep
 );
 
+// Upstream: v17.2.7/src/test/crush/crush.cc::CRUSHTest.indep_out_contig (NORMAL)
+// Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush.cc#L179
+// Mapping-only adaptation: source type 123 maps as Erasure after the C proof above.
 // Upstream: v20.2.4/src/test/crush/crush.cc::IndepTest.out_contig (NORMAL, MSR)
 // Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L297
 variants!(
@@ -395,6 +408,9 @@ variants!(
     Family::Indep
 );
 
+// Upstream: v17.2.7/src/test/crush/crush.cc::CRUSHTest.indep_out_progressive (NORMAL)
+// Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush.cc#L205
+// Mapping-only adaptation: source type 123 maps as Erasure after the C proof above.
 // Upstream: v20.2.4/src/test/crush/crush.cc::IndepTest.out_progressive (NORMAL, MSR)
 // Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L322
 variants!(

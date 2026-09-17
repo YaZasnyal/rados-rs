@@ -277,3 +277,28 @@ The vector fixture now has 1,400 rows. The rerun reference log records every
 pinned `git show`, clang build and C runner invocation together with the
 per-case SHA256 and cross-release comparison result in
 `.renchik/test-parity/task-1-round1-reference.log`.
+
+## Quincy mapper and STRAW weights after 930aa2e — 2026-09-17
+
+The historical inventory's Quincy FIRSTN wording was incorrect. Those five
+cases are `CHOOSELEAF_INDEP`; current status corrects this without rewriting
+the archived snapshot. Both pinned `CrushWrapper::create()` paths select Jewel
+tunables and `straw_calc_version=1`.
+
+Existing NORMAL INDEP tests retain all source inputs/assertions and now cite
+Quincy. `reference-check.c` builds their hierarchy with raw type 123 and type
+3, compares every ordered output, then `verify-reference.py` compares actual
+Rust ports across 100, 100, 100, 100, and 108 calls. Both references produce
+`558f98bbf0b260dd`, `bf44299af70e19fe`, `86205296e425f70b`,
+`2496ef9ab5778af4`, and `d5f68f99ffabd047`. This proves only the test-harness
+Erasure mapping; raw-123 decode remains unported.
+
+`weights.rs` ports `straw_zero` (10,000), `straw_same` (100,000), and
+`straw2_reweight` (1,000,000). Pinned `builder.c` supplies STRAW lengths.
+Both C implementations and Rust have complete-output digests
+`12722a47fde289ef`, `32c9040dd1425108` (12 differences), and
+`65e72f17e5a64b0b`. Reference libc reports unseeded `rand()%10 == 7`, yielding
+the original integer-divided weight 45871. `straw2_stddev` is Not ported: it
+only prints diagnostics. The initial STRAW placeholder-length RED and the
+harness-only pre-port C/Rust mismatch are logged in `task-2-initial-focused.log`
+and `task-2-reference-initial.log`; no production change was needed.

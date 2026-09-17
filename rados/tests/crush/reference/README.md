@@ -8,7 +8,7 @@ runner also links `builder.c` and `crush.c` to verify STRAW construction.
 | Program | Purpose and input origin |
 | --- | --- |
 | [mapper-regressions.c](mapper-regressions.c) | Generates local regression scenarios, not named upstream tests. Reproduction and output provenance: [generated mapper regressions](#generated-mapper-regressions). |
-| [reference-check.c](reference-check.c) | Recreates the four dedicated Tentacle MSR test setups, the shared `crush_weights.sh` input and both `bad-mappings.t` cases; prints C results for comparison with the Rust ports. |
+| [reference-check.c](reference-check.c) | Recreates the four dedicated Tentacle MSR setups, `crush_weights.sh`, both `bad-mappings.t` cases, Quincy type-123 INDEP equivalence, and the three assertion-bearing STRAW/STRAW2 cases. |
 | [verify-reference.py](verify-reference.py) | Extracts pinned Ceph sources into a temporary directory, builds the C runner, and compares its results with an instrumented temporary copy of the Rust tests. |
 | [prepare-cli.py](prepare-cli.py) | Verifies original inputs against both pinned commits, compiles three text maps with pinned Docker tools, checks all seven upstream test command outputs, and writes six binary maps here. |
 
@@ -32,6 +32,21 @@ the pinned `crush_make_straw_bucket`, asserting all five straws equal 65536.
 The audit compares both seed-1/ten-replica results with the actual Rust test,
 which asserts the upstream transcript's complete ordered vectors. This checks
 placement and builder setup, not the text compiler or binary decoder.
+
+For Quincy INDEP, it constructs the same source hierarchy twice with raw rule
+type 123 and Erasure type 3, compares every ordered output before hashing, and
+then checks the five resulting digests in both pinned releases. The domains are
+100 each for `toosmall`, `basic`, `out_alt`, and `out_contig`, plus 4×27
+progressive failures: 508 placement calls per type. Raw type 123 is test-only;
+this proves the Rust test-harness adaptation and does not add decoder coverage.
+
+For `straw_zero`, `straw_same`, and `straw2_reweight`, the runner invokes the
+unmodified `builder.c` with `straw_calc_version=1`, prints the exact STRAW
+weights/lengths, and streams all ordered outputs with the fixed word-FNV-1a
+digest documented in the status page. It checks 10,000, 100,000, and 1,000,000
+inputs respectively against a temporary instrumented copy of `weights.rs` for
+both releases. The runner records the reference platform's unseeded
+`rand()%10 == 7` (`changed_weight=45871`); no Rust RNG is substituted.
 
 Cargo tests do not execute these helpers; they embed the generated
 [mapper-regressions.txt](mapper-regressions.txt),
