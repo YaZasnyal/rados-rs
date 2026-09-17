@@ -1032,9 +1032,7 @@ impl PgPool {
             return pos;
         }
         let size = self.size as i32;
-        let nonprimary_count = (0..size as usize)
-            .filter(|&i| self.is_nonprimary_shard(ShardId::new(i as i8)))
-            .count() as i32;
+        let nonprimary_count = self.nonprimary_shards.iter().count() as i32;
         let num_parity_shards = size - nonprimary_count - 1;
         let p = pos.0 as i32;
         let result = if p > num_parity_shards {
@@ -2641,6 +2639,7 @@ const CEPH_FEATURE_SERVER_JEWEL: u64 = 1 << 57;
 const CEPH_FEATUREMASK_SERVER_KRAKEN: u64 = (1 << 14) | (1 << 57);
 const CEPH_FEATURE_MSG_ADDR2: u64 = 1 << 59;
 const CEPH_FEATURE_CEPHX_V2: u64 = 1 << 61;
+const CEPH_FEATUREMASK_STRETCH_MODE: u64 = (1 << 32) | (1 << 28) | (1 << 57);
 const CEPH_FEATURES_CRUSH_QUINCY: u64 = CEPH_FEATURE_CRUSH_TUNABLES
     | CEPH_FEATURE_CRUSH_TUNABLES2
     | CEPH_FEATURE_CRUSH_TUNABLES3
@@ -2656,7 +2655,7 @@ const CEPH_FEATURES_CRUSH_TENTACLE: u64 = CEPH_FEATURE_CRUSH_TUNABLES
     | CEPH_FEATURE_CRUSH_V4
     | CEPH_FEATUREMASK_CRUSH_MSR;
 
-/// Source-release semantics for [`OSDMap::get_features_for_osdmap_test`].
+/// Ceph release whose [`OSDMap::get_features_for_release`] rules should apply.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OSDMapFeatureRelease {
     Quincy,
@@ -3204,11 +3203,12 @@ impl OSDMap {
         Self::default()
     }
 
-    /// Derive the feature masks exercised by the pinned `OSDMapTest.Features` setup.
+    /// Return the feature and possible-feature masks for a Ceph entity type.
     ///
-    /// This is deliberately a test-parity compatibility subset, not a general
-    /// Ceph feature-negotiation API.
-    pub fn get_features_for_osdmap_test(
+    /// The selected source release controls release-specific CRUSH, upmap, and
+    /// server feature masks. This reads OSDMap state; it does not advertise a
+    /// messenger session's features.
+    pub fn get_features_for_release(
         &self,
         release: OSDMapFeatureRelease,
         entity_type: crate::EntityType,
@@ -3326,6 +3326,10 @@ impl OSDMap {
             }
             mask |=
                 CEPH_FEATURE_SERVER_JEWEL | CEPH_FEATUREMASK_SERVER_KRAKEN | CEPH_FEATURE_MSG_ADDR2;
+            if self.stretch_mode_enabled {
+                features |= CEPH_FEATUREMASK_STRETCH_MODE;
+                mask |= CEPH_FEATUREMASK_STRETCH_MODE;
+            }
         }
         if self.require_min_compat_client >= 14
             || (self.require_osd_release >= 14 && entity_type == crate::EntityType::OSD)
@@ -3764,6 +3768,7 @@ mod tests {
     const CRUSH_TUNABLES5: u64 = 1 << 58;
     const OSDMAP_PG_UPMAP: u64 = (1 << 21) | (1 << 57);
     const SERVER_REEF: u64 = (1 << 31) | (1 << 28) | (1 << 57);
+    const STRETCH_MODE: u64 = 1 << 32;
     const CRUSH_FEATURE_MASK_QUINCY: u64 = CRUSH_TUNABLES
         | CRUSH_TUNABLES2
         | CRUSH_TUNABLES3
@@ -3787,26 +3792,27 @@ mod tests {
         map.buckets[index] = Some(bucket);
     }
 
-    fn straw_bucket(id: i32, bucket_type: i32, items: Vec<i32>) -> CrushBucket {
+    fn straw2_bucket(id: i32, bucket_type: i32, items: Vec<i32>) -> CrushBucket {
         let size = items.len();
         let weights = vec![0x1_0000; items.len()];
         CrushBucket {
             id,
             bucket_type,
-            alg: BucketAlgorithm::Straw,
+            alg: BucketAlgorithm::Straw2,
             hash: 0,
             weight: weights.iter().sum(),
             size: size as u32,
             items,
-            data: BucketData::Straw {
+            data: BucketData::Straw2 {
                 item_weights: weights,
-                straws: vec![0x1_0000; size],
             },
         }
     }
 
     fn six_osd_crush_map() -> CrushMap {
         let mut crush = CrushMap::new();
+        crush.chooseleaf_stable = 1;
+        crush.allowed_bucket_algs = (1 << 1) | (1 << 2) | (1 << 4) | (1 << 5);
         crush.type_names = [(0, "osd"), (1, "host"), (3, "rack"), (11, "root")]
             .into_iter()
             .map(|(id, name)| (id, name.to_owned()))
@@ -3825,9 +3831,9 @@ mod tests {
         .into_iter()
         .map(|(id, name)| (id, name.to_owned()))
         .collect();
-        store_bucket(&mut crush, straw_bucket(-1, 11, vec![-2]));
-        store_bucket(&mut crush, straw_bucket(-2, 3, vec![-3]));
-        store_bucket(&mut crush, straw_bucket(-3, 1, (0..6).collect()));
+        store_bucket(&mut crush, straw2_bucket(-1, 11, vec![-2]));
+        store_bucket(&mut crush, straw2_bucket(-2, 3, vec![-3]));
+        store_bucket(&mut crush, straw2_bucket(-3, 1, (0..6).collect()));
         crush.max_buckets = 3;
         crush.max_devices = 6;
         crush
@@ -3964,7 +3970,9 @@ mod tests {
         let expected = CRUSH_TUNABLES
             | CRUSH_TUNABLES2
             | CRUSH_TUNABLES3
+            | CRUSH_TUNABLES5
             | CRUSH_V2
+            | (1 << 48)
             | OSDHASHPSPOOL
             | OSD_PRIMARY_AFFINITY;
         for release in [OSDMapFeatureRelease::Quincy, OSDMapFeatureRelease::Tentacle] {
@@ -3977,11 +3985,11 @@ mod tests {
                 | OSD_PRIMARY_AFFINITY
                 | (1 << 61);
             assert_eq!(
-                map.get_features_for_osdmap_test(release, crate::EntityType::CLIENT),
+                map.get_features_for_release(release, crate::EntityType::CLIENT),
                 (expected, base_mask)
             );
             assert_eq!(
-                map.get_features_for_osdmap_test(release, crate::EntityType::OSD),
+                map.get_features_for_release(release, crate::EntityType::OSD),
                 (
                     expected,
                     base_mask | (1 << 57) | ((1 << 14) | (1 << 57)) | (1 << 59)
@@ -4003,9 +4011,20 @@ mod tests {
                 | OSD_PRIMARY_AFFINITY
                 | (1 << 61);
             assert_eq!(
-                map.get_features_for_osdmap_test(release, crate::EntityType::MON),
+                map.get_features_for_release(release, crate::EntityType::MON),
                 (expected & !CRUSH_V2, base_mask)
             );
+        }
+        map.stretch_mode_enabled = true;
+        for release in [OSDMapFeatureRelease::Quincy, OSDMapFeatureRelease::Tentacle] {
+            let (osd_features, osd_mask) =
+                map.get_features_for_release(release, crate::EntityType::OSD);
+            let (client_features, client_mask) =
+                map.get_features_for_release(release, crate::EntityType::CLIENT);
+            assert_eq!(osd_features & STRETCH_MODE, STRETCH_MODE);
+            assert_eq!(osd_mask & STRETCH_MODE, STRETCH_MODE);
+            assert_eq!(client_features & STRETCH_MODE, 0);
+            assert_eq!(client_mask & STRETCH_MODE, 0);
         }
     }
 
@@ -4284,6 +4303,35 @@ mod tests {
             let back = pool.pgtemp_undo_primaryfirst_shard(true, pf);
             assert_eq!(s, back, "roundtrip failed for shard {i}");
         }
+    }
+
+    #[test]
+    fn test_pgtemp_primaryfirst_scalar_roundtrip_counts_decoded_shard_127() {
+        let mut encoded = bytes::BytesMut::new();
+        let mut nonprimary = ShardIdSet::default();
+        nonprimary.insert(ShardId::new(2));
+        nonprimary.insert(ShardId::new(3));
+        nonprimary.insert(ShardId::new(127));
+        nonprimary.encode(&mut encoded, 0).unwrap();
+        let mut encoded = encoded.freeze();
+        let nonprimary = ShardIdSet::decode(&mut encoded, 0).unwrap();
+        assert_eq!(
+            nonprimary.iter().collect::<Vec<_>>(),
+            vec![ShardId::new(2), ShardId::new(3), ShardId::new(127)]
+        );
+
+        let pool = PgPool {
+            pool_type: PgPool::TYPE_ERASURE,
+            flags: PgPool::FLAG_EC_OPTIMIZATIONS,
+            size: 6,
+            nonprimary_shards: nonprimary,
+            ..Default::default()
+        };
+        let shard = ShardId::new(1);
+        assert_eq!(
+            pool.pgtemp_undo_primaryfirst_shard(true, pool.pgtemp_primaryfirst_shard(true, shard)),
+            shard
+        );
     }
 
     #[test]
