@@ -95,7 +95,7 @@ pub fn crush_do_rule(
     crush_do_rule_with_choose_args(map, rule_id, x, result, result_max, weights, -1)
 }
 
-/// Execute a CRUSH rule while collecting retry observations in `profile`.
+/// Execute a conventional CRUSH rule while collecting retry observations in `profile`.
 pub fn crush_do_rule_with_choose_profile(
     map: &CrushMap,
     rule_id: u32,
@@ -105,6 +105,14 @@ pub fn crush_do_rule_with_choose_profile(
     weights: &[u32],
     profile: &mut ChooseProfile,
 ) -> Result<()> {
+    if matches!(
+        map.get_rule(rule_id)?.rule_type,
+        crate::crush::types::RuleType::MsrFirstN | crate::crush::types::RuleType::MsrIndep
+    ) {
+        return Err(CrushError::InvalidRuleState(
+            "retry profiling is unsupported for MSR rules",
+        ));
+    }
     crush_do_rule_impl(
         map,
         rule_id,
