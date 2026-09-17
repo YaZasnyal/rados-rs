@@ -113,7 +113,14 @@ fn check_retry_vectors(cases: &[(i32, usize, Vec<CrushRuleStep>)]) {
             .enumerate()
         {
             assert_eq!(record[0], *scenario);
-            assert_eq!(record[1], if (13..=16).contains(scenario) { 1 } else { 0 });
+            assert_eq!(
+                record[1],
+                if (13..=16).contains(scenario) || (23..=24).contains(scenario) {
+                    1
+                } else {
+                    0
+                }
+            );
             assert_eq!(record[2], seed as i32);
             assert_eq!(record[3] as usize, record.len() - 4);
             let weights = (0..4)
@@ -166,7 +173,7 @@ fn firstn_honors_explicit_leaf_retries() {
     check_vectors(1, &map, 1);
 }
 
-// Local cases 11..20; v17.2.7/v20.2.4 src/crush/mapper.c::crush_do_rule_no_retry.
+// Local cases 11..24; v17.2.7/v20.2.4 src/crush/mapper.c::crush_do_rule_no_retry.
 // Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/crush/mapper.c#L941
 // Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L890
 #[test]
@@ -286,6 +293,52 @@ fn rule_retry_overrides_match_ceph() {
                 step(RuleOp::SetChooseTries, -1, 0),
                 step(RuleOp::Take, -1, 0),
                 step(RuleOp::ChooseFirstN, 1, 0),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        (
+            21,
+            3,
+            vec![
+                step(RuleOp::SetChooseLocalTries, 1, 0),
+                step(RuleOp::SetChooseLocalTries, -1, 0),
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseFirstN, 3, 0),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        (
+            22,
+            3,
+            vec![
+                step(RuleOp::SetChooseLocalTries, 1, 0),
+                step(RuleOp::SetChooseLocalTries, 0, 0),
+                step(RuleOp::SetChooseLocalTries, -1, 0),
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseFirstN, 3, 0),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        (
+            23,
+            3,
+            vec![
+                step(RuleOp::SetChooseLocalFallbackTries, 1, 0),
+                step(RuleOp::SetChooseLocalFallbackTries, -1, 0),
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseFirstN, 3, 0),
+                step(RuleOp::Emit, 0, 0),
+            ],
+        ),
+        (
+            24,
+            3,
+            vec![
+                step(RuleOp::SetChooseLocalFallbackTries, 1, 0),
+                step(RuleOp::SetChooseLocalFallbackTries, 0, 0),
+                step(RuleOp::SetChooseLocalFallbackTries, -1, 0),
+                step(RuleOp::Take, -1, 0),
+                step(RuleOp::ChooseFirstN, 3, 0),
                 step(RuleOp::Emit, 0, 0),
             ],
         ),

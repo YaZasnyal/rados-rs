@@ -10,10 +10,10 @@ int main(int argc, char **argv)
 {
     assert(argc == 2);
     int scenario = atoi(argv[1]);
-    assert(scenario >= 0 && scenario <= 20);
+    assert(scenario >= 0 && scenario <= 24);
 #ifdef QUINCY
     assert(scenario == 0 || scenario == 1 || scenario == 2 || scenario == 4 ||
-           (scenario >= 11 && scenario <= 20));
+           (scenario >= 11 && scenario <= 24));
 #endif
     int root_items[] = {-2, -3}, host0_items[] = {0, 1}, host1_items[] = {2, 3};
     unsigned root_weights[] = {131072, 131072}, host_weights[] = {65536, 65536};
@@ -199,6 +199,40 @@ int main(int argc, char **argv)
         rule->steps[5] = (struct crush_rule_step){4, 0, 0};
         count = 1;
         break;
+    case 21: /* Direct FIRSTN: positive local retries change collision handling. */
+        rule->len = 5;
+        rule->steps[0] = (struct crush_rule_step){10, 1, 0};
+        rule->steps[1] = (struct crush_rule_step){10, -1, 0};
+        rule->steps[2] = (struct crush_rule_step){1, -1, 0};
+        rule->steps[3] = (struct crush_rule_step){2, 3, 0};
+        rule->steps[4] = (struct crush_rule_step){4, 0, 0};
+        break;
+    case 22: /* Direct FIRSTN: zero local retries survive a negative repeat. */
+        rule->len = 6;
+        rule->steps[0] = (struct crush_rule_step){10, 1, 0};
+        rule->steps[1] = (struct crush_rule_step){10, 0, 0};
+        rule->steps[2] = (struct crush_rule_step){10, -1, 0};
+        rule->steps[3] = (struct crush_rule_step){1, -1, 0};
+        rule->steps[4] = (struct crush_rule_step){2, 3, 0};
+        rule->steps[5] = (struct crush_rule_step){4, 0, 0};
+        break;
+    case 23: /* Direct FIRSTN: local fallback handles an out child. */
+        rule->len = 5;
+        rule->steps[0] = (struct crush_rule_step){11, 1, 0};
+        rule->steps[1] = (struct crush_rule_step){11, -1, 0};
+        rule->steps[2] = (struct crush_rule_step){1, -1, 0};
+        rule->steps[3] = (struct crush_rule_step){2, 3, 0};
+        rule->steps[4] = (struct crush_rule_step){4, 0, 0};
+        break;
+    case 24: /* Direct FIRSTN: zero fallback survives a negative repeat. */
+        rule->len = 6;
+        rule->steps[0] = (struct crush_rule_step){11, 1, 0};
+        rule->steps[1] = (struct crush_rule_step){11, 0, 0};
+        rule->steps[2] = (struct crush_rule_step){11, -1, 0};
+        rule->steps[3] = (struct crush_rule_step){1, -1, 0};
+        rule->steps[4] = (struct crush_rule_step){2, 3, 0};
+        rule->steps[5] = (struct crush_rule_step){4, 0, 0};
+        break;
     }
     map.working_size = sizeof(struct crush_work)
         + 3 * sizeof(struct crush_work_bucket *)
@@ -207,7 +241,8 @@ int main(int argc, char **argv)
     void *work = calloc(1, map.working_size + 3 * count * sizeof(int));
     assert(work);
     crush_init_workspace(&map, work);
-    unsigned mask_start = scenario >= 13 && scenario <= 16 ? 1 : 0;
+    unsigned mask_start = (scenario >= 13 && scenario <= 16) ||
+                          (scenario >= 23 && scenario <= 24) ? 1 : 0;
     unsigned masks = scenario >= 11 ? mask_start + 1 : 16;
     for (unsigned mask = mask_start; mask < masks; ++mask) {
         unsigned weights[4];

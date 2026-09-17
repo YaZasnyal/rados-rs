@@ -129,13 +129,17 @@ empty and are asserted directly instead of storing another 6,400 empty rows.
 No negative MSR fanout is passed to the C oracle: that input has no safe C
 contract and is covered by Rust validation tests.
 
-[`mapper-retries.txt`](mapper-retries.txt) contains 1,000 rows for local cases
-11..20: all-in inputs except cases 13..16, which mark OSD 0 out to exercise
-recursive leaf retries. Every case retains the C result length and ordered
-devices. Cases 11 and 12 verify that zero and negative values leave the prior
+[`mapper-retries.txt`](mapper-retries.txt) contains 1,400 rows for local cases
+11..24: all-in inputs except cases 13..16 and 23..24, which mark OSD 0 out.
+The former exercise recursive leaf retries; the latter exercise direct FIRSTN
+fallback. Every case retains the C result length and ordered devices. Cases 11
+and 12 verify that zero and negative values leave the prior
 positive `choose_tries` or `chooseleaf_tries` override unchanged. Cases 13..16
 cover positive and zero local/local-fallback retries with a negative repeat.
 Cases 17..19 cover `vary_r` 2 or 0 and `stable` 0 with a negative repeat.
+Cases 21..24 add direct FIRSTN coverage for local and local-fallback retries;
+the positive and zero variants produce different C vectors under collision or
+an out child.
 The C mapper computes a recursive seed as `r >> (vary_r - 1)` when `vary_r`
 is nonzero; the generated cases use only 0 and 2, avoiding an undefined C
 shift count while exercising both branches.
@@ -157,12 +161,14 @@ shift count while exercising both branches.
 | 17 / 18 | Recursive `vary_r`: positive and zero values with a negative repeat. |
 | 19 | Recursive `stable=0` survives a negative repeat. |
 | 20 | Direct FIRSTN ignores zero and negative choose-tries repeats. |
+| 21 / 22 | Direct FIRSTN local retries: positive and zero values with a negative repeat. |
+| 23 / 24 | Direct FIRSTN local fallback retries: positive and zero values with a negative repeat. |
 
 SHA256:
 
-- Generator: `cd6130979dacc7153c6025c8e54f7c1a1beaafcc6d534469c3f7ce5591cbf96e`.
+- Generator: `68e1da540bb52b77a1397a5fd2898ac5a7613b8130ebb5ac273cbf0a0a0de4aa`.
 - Existing vectors: `526fbf16663e42265899c0405e0213996c8cd14f391c4aeb52cd8273f0c3127c`.
-- Retry vectors: `9cde2e3b1d28361fd6a6549d2195893798085b1deaa3b24c48b37a6d3f34084e`.
+- Retry vectors: `5fb381c0ddd483e7cf0a75f2731ee728dc4f242e7404158da5b3d5a457a5ba02`.
 
 Generation environment: macOS, Apple clang 21.0.0 (clang-2100.1.1.101),
 `-std=gnu99 -O2`. The only build adaptation is an empty generated
@@ -202,7 +208,7 @@ with tempfile.TemporaryDirectory() as directory:
         if release == 'quincy':
             command.append('-DQUINCY')
         sp.run(command, check=True)
-        cases = (0, 1, 2, 4, *range(11, 21)) if release == 'quincy' else range(21)
+        cases = (0, 1, 2, 4, *range(11, 25)) if release == 'quincy' else range(25)
         outputs[release] = {case: sp.check_output([str(root / 'run'), str(case)])
                             for case in cases}
     for case, data in outputs['quincy'].items():
@@ -213,5 +219,5 @@ with tempfile.TemporaryDirectory() as directory:
     (reference / 'mapper-regressions.txt').write_bytes(
         b''.join(outputs['tentacle'][case] for case in range(7)))
     (reference / 'mapper-retries.txt').write_bytes(
-        b''.join(outputs['tentacle'][case] for case in range(11, 21)))
+        b''.join(outputs['tentacle'][case] for case in range(11, 25)))
 ```

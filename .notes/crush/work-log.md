@@ -266,3 +266,14 @@ This closes only the zero/nonpositive conventional retry-setting row. Remaining
 order-3 Quincy mapper cases and STRAW/STRAW2 weight cases, plus later choose
 arguments, location/retry observability, OSDMap and live-cluster work, remain
 open.
+
+### Review follow-up
+
+Direct FIRSTN cases 21..24 now cover local and local-fallback retries with
+the same positive, zero, negative and repeated guards. Cases 21/22 use an
+all-in collision input; cases 23/24 mark OSD 0 out. Both positive/zero pairs
+produce different ordered C vectors, so the direct path observes each setting.
+The vector fixture now has 1,400 rows. The rerun reference log records every
+pinned `git show`, clang build and C runner invocation together with the
+per-case SHA256 and cross-release comparison result in
+`.renchik/test-parity/task-1-round1-reference.log`.

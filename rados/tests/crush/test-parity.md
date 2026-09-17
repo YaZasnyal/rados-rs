@@ -31,7 +31,7 @@ complete CRUSH or end-to-end client compatibility.
 | Dedicated MSR topologies, Tentacle | Four scenarios: host/OSD failure, truncated fanout, EC 8+6 and two roots | [functional.rs](functional.rs) | Passing; 3,007 ordered vectors also compared with the C mapper |
 | Weight distribution, both releases | Both `crush_weights.sh` assertions, each over seeds 1..1,000,000 with the original thresholds | [functional.rs](functional.rs) | Passing; device counts also compared with both C mappers |
 | Insufficient mappings, both releases | `bad-mappings.t` rules 0/1, seed 1, ten replicas: exact FIRSTN short result and INDEP NONE slots | [golden.rs](golden.rs) `bad_mappings_compiled`; [functional.rs](functional.rs) `bad_mappings` | Passing with both compiled map encodings and the earlier direct setup; same two upstream cases |
-| Additional mapper regressions | Eight local tests, including 12,200 vectors generated from pinned C mappers | [regressions.rs](regressions.rs) | Passing; additional coverage, not upstream test ports |
+| Additional mapper regressions | Eight local tests, including 12,600 vectors generated from pinned C mappers | [regressions.rs](regressions.rs) | Passing; additional coverage, not upstream test ports |
 
 The golden scenarios are `bobtail_tunables`, `firefly_tunables`,
 `hammer_tunables`, `indep`, `jewel_tunables`, `legacy_tunables`,
