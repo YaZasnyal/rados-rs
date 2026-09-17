@@ -2821,6 +2821,19 @@ impl OSDMap {
     /// The feature is deprecated upstream and we have no plan to
     /// resurrect support for it.
     pub fn pg_to_placement(&self, pg: &PgId) -> Result<PgPlacement, RadosError> {
+        let pool = match self.pools.get(&pg.pool) {
+            Some(pool) => pool,
+            _ => {
+                return Ok(PgPlacement {
+                    raw: Vec::new(),
+                    up: Vec::new(),
+                    acting: Vec::new(),
+                    up_primary: -1,
+                    acting_primary: -1,
+                });
+            }
+        };
+
         let cache_key = (pg.pool, pg.seed);
         {
             let mut cache = self.lock_acting_cache()?;
@@ -2828,11 +2841,6 @@ impl OSDMap {
                 return Ok(cached.clone());
             }
         }
-
-        let pool = self
-            .pools
-            .get(&pg.pool)
-            .ok_or_else(|| RadosError::Protocol(format!("Pool {} not found", pg.pool)))?;
 
         let raw = self.pg_to_osds(pg)?;
         let placement = self.placement_from_raw(pool, pg, raw);
