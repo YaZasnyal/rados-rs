@@ -242,10 +242,32 @@ fn crush_choose_firstn(
     mut leaves: Option<&mut [i32]>,
     parent_r: u32,
 ) -> Result<usize> {
+    let _span = tracing::debug_span!(
+        "crush_choose_firstn",
+        bucket_id,
+        x,
+        numrep,
+        item_type,
+        parent_r
+    )
+    .entered();
+    tracing::debug!(
+        outpos,
+        capacity = out.len(),
+        tries,
+        recurse_tries,
+        local_retries = map.choose_local_tries,
+        local_fallback_retries = map.choose_local_fallback_tries,
+        vary_r,
+        stable,
+        chooseleaf = leaves.is_some(),
+        "Starting FIRSTN selection"
+    );
     let bucket = map.get_bucket(bucket_id)?;
     let first_rep = if stable != 0 { 0 } else { outpos };
     'replicas: for rep in first_rep..numrep {
         if outpos == out.len() {
+            tracing::trace!(rep, outpos, "Output capacity reached");
             break;
         }
         let mut current_bucket = bucket;
@@ -262,25 +284,62 @@ fn crush_choose_firstn(
                     && local_failures >= current_bucket.size / 2
                     && local_failures > map.choose_local_fallback_tries
                 {
+                    tracing::trace!(
+                        rep,
+                        r,
+                        current_bucket_id = current_bucket.id,
+                        local_failures,
+                        "Using permutation fallback"
+                    );
                     bucket_perm_choose(current_bucket, x, r)
                 } else {
                     bucket_choose(current_bucket, x, r)
                 };
+                tracing::trace!(
+                    rep,
+                    r,
+                    current_bucket_id = current_bucket.id,
+                    item,
+                    "Selected candidate"
+                );
                 if item >= map.max_devices {
+                    tracing::trace!(
+                        rep,
+                        item,
+                        max_devices = map.max_devices,
+                        "Skipping replica: invalid device"
+                    );
                     continue 'replicas;
                 }
                 let Some(selected_type) = get_item_type(map, item) else {
+                    tracing::trace!(rep, item, "Skipping replica: invalid bucket");
                     continue 'replicas;
                 };
                 if selected_type != item_type {
                     if item >= 0 {
+                        tracing::trace!(
+                            rep,
+                            item,
+                            selected_type,
+                            "Skipping replica: wrong item type"
+                        );
                         continue 'replicas;
                     }
+                    tracing::trace!(
+                        rep,
+                        from = current_bucket.id,
+                        to = item,
+                        selected_type,
+                        "Descending through hierarchy"
+                    );
                     current_bucket = map.get_bucket(item)?;
                     continue;
                 }
 
                 collide = out[..outpos].contains(&item);
+                if collide {
+                    tracing::trace!(rep, item, outpos, "Rejecting candidate: collision");
+                }
                 let mut reject = false;
                 if !collide && let Some(leaf_out) = leaves.as_deref_mut() {
                     if item < 0 {
@@ -289,6 +348,14 @@ fn crush_choose_firstn(
                         } else {
                             r.checked_shr(u32::from(vary_r) - 1).unwrap_or(0)
                         };
+                        tracing::trace!(
+                            rep,
+                            item,
+                            outpos,
+                            sub_r,
+                            recurse_tries,
+                            "Selecting leaf in failure domain"
+                        );
                         let end = crush_choose_firstn(
                             map,
                             item,
@@ -306,12 +373,18 @@ fn crush_choose_firstn(
                             sub_r,
                         )?;
                         reject = end == outpos;
+                        if reject {
+                            tracing::trace!(rep, item, "Rejecting candidate: no eligible leaf");
+                        }
                     } else {
                         leaf_out[outpos] = item;
                     }
                 }
                 if !reject && !collide && item >= 0 {
                     reject = is_out(weights, item, x);
+                    if reject {
+                        tracing::trace!(rep, item, "Rejecting candidate: device is out");
+                    }
                 }
                 if !reject && !collide {
                     tracing::trace!(
@@ -326,6 +399,12 @@ fn crush_choose_firstn(
                     outpos += 1;
                     continue 'replicas;
                 }
+            } else {
+                tracing::trace!(
+                    rep,
+                    current_bucket_id = current_bucket.id,
+                    "Rejecting empty bucket"
+                );
             }
 
             total_failures += 1;
@@ -335,16 +414,31 @@ fn crush_choose_firstn(
                     && local_failures <= current_bucket.size + map.choose_local_fallback_tries)
             {
                 // A local retry stays in the bucket where the collision occurred.
+                tracing::trace!(
+                    rep,
+                    current_bucket_id = current_bucket.id,
+                    total_failures,
+                    local_failures,
+                    "Retrying current bucket"
+                );
                 continue;
             }
             if total_failures >= tries {
+                tracing::debug!(
+                    rep,
+                    outpos,
+                    total_failures,
+                    "Skipping replica: retry budget exhausted"
+                );
                 continue 'replicas;
             }
             // A descent retry starts again at the original failure domain.
+            tracing::trace!(rep, total_failures, "Restarting descent");
             current_bucket = bucket;
             local_failures = 0;
         }
     }
+    tracing::debug!(outpos, "Finished FIRSTN selection");
     Ok(outpos)
 }
 

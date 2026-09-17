@@ -224,14 +224,14 @@ and fixes. No upstream executable differential or live-cluster gate was run.
 | [rados/src/crush/decode.rs::test_device_class_methods](../../src/crush/decode.rs#L396) | Synthetic class-name/ID lookups, not decoded shadow-tree mapping. |
 | [rados/src/crush/hash.rs::test_crush_hash32_2](../../src/crush/hash.rs#L237) | One exact hash vector (`10, 2 -> 1838530675`); no pinned upstream test attribution. |
 | [rados/src/crush/hash.rs::test_ceph_str_hash_rjenkins](../../src/crush/hash.rs#L248) | Nonzero/determinism/different-input checks; no Ceph expected string hashes. |
-| [rados/src/crush/mapper.rs::test_is_out](../../src/crush/mapper.rs#L651) | Fully in/out and invalid IDs; no partial-weight oracle. |
-| [rados/src/crush/mapper.rs::test_crush_do_rule_simple](../../src/crush/mapper.rs#L667) | One flat bucket, one replica; valid device only. |
-| [rados/src/crush/mapper.rs::test_crush_choose_firstn](../../src/crush/mapper.rs#L725) | Now asserts two distinct items after the helper signature change; this local unit scenario has no Ceph expected vector. |
-| [rados/src/crush/mapper.rs::test_crush_choose_indep](../../src/crush/mapper.rs#L758) | Flat bucket, three filled/distinct positions; no Ceph vector. |
-| [rados/src/crush/mapper.rs::test_crush_choose_indep_stable_positions](../../src/crush/mapper.rs#L796) | Repeats the same call; never changes availability. |
-| [rados/src/crush/mapper.rs::test_crush_choose_indep_with_out_device](../../src/crush/mapper.rs#L829) | All weights remain fully in; no device is actually marked out. |
-| [rados/src/crush/mapper.rs::test_crush_do_rule_indep](../../src/crush/mapper.rs#L875) | Count and uniqueness in a flat map; no ordered Ceph result. |
-| [rados/src/crush/mapper.rs::test_crush_do_rule_chooseleaf_indep](../../src/crush/mapper.rs#L950) | Flat device-level selection; no multi-level failure-domain assertion. |
+| [rados/src/crush/mapper.rs::test_is_out](../../src/crush/mapper.rs#L745) | Fully in/out and invalid IDs; no partial-weight oracle. |
+| [rados/src/crush/mapper.rs::test_crush_do_rule_simple](../../src/crush/mapper.rs#L761) | One flat bucket, one replica; valid device only. |
+| [rados/src/crush/mapper.rs::test_crush_choose_firstn](../../src/crush/mapper.rs#L819) | Now asserts two distinct items after the helper signature change; this local unit scenario has no Ceph expected vector. |
+| [rados/src/crush/mapper.rs::test_crush_choose_indep](../../src/crush/mapper.rs#L852) | Flat bucket, three filled/distinct positions; no Ceph vector. |
+| [rados/src/crush/mapper.rs::test_crush_choose_indep_stable_positions](../../src/crush/mapper.rs#L890) | Repeats the same call; never changes availability. |
+| [rados/src/crush/mapper.rs::test_crush_choose_indep_with_out_device](../../src/crush/mapper.rs#L923) | All weights remain fully in; no device is actually marked out. |
+| [rados/src/crush/mapper.rs::test_crush_do_rule_indep](../../src/crush/mapper.rs#L969) | Count and uniqueness in a flat map; no ordered Ceph result. |
+| [rados/src/crush/mapper.rs::test_crush_do_rule_chooseleaf_indep](../../src/crush/mapper.rs#L1044) | Flat device-level selection; no multi-level failure-domain assertion. |
 | [rados/src/crush/placement.rs::test_object_locator](../../src/crush/placement.rs#L411) | Rust locator construction. |
 | [rados/src/crush/placement.rs::test_pg_id](../../src/crush/placement.rs#L427) | Rust PG identity construction. |
 | [rados/src/crush/placement.rs::test_object_to_pg](../../src/crush/placement.rs#L435) | Deterministic synthetic object hashing; no upstream oracle. |
