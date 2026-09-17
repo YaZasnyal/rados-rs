@@ -189,7 +189,7 @@ fn selected_empty_choose_arg_does_not_fall_back_to_default() {
     assert_eq!(absent, default);
 
     assert_eq!(
-        pg_to_osds(&map, PgId::new(1, 2), 64, 0, &[1 << 16; 2], 1, false).unwrap(),
+        pg_to_osds(&map, PgId::new(1, 1), 64, 0, &[1 << 16; 2], 1, false).unwrap(),
         empty
     );
 }
@@ -760,8 +760,8 @@ fn pinned_c_choose_argument_vectors_cover_all_rule_paths() {
 
 #[test]
 fn pg_pool_index_uses_selected_default_absent_and_empty_choose_sets() {
-    // The first 100 C FIRSTN vectors also prove the placement-facing caller's
-    // pool-index selection, with pgp_num preserving each seed exactly.
+    // Pinned C FIRSTN vectors prove the placement-facing caller's pool-index
+    // selection after legacy `raw_pg_to_pps` adds the pool id to seed zero.
     let vectors: Vec<Vec<i32>> = include_str!("reference/choose-args-vectors.txt")
         .lines()
         .filter(|line| !line.starts_with('#'))
@@ -774,41 +774,32 @@ fn pg_pool_index_uses_selected_default_absent_and_empty_choose_sets() {
             (fields[0] == 0).then_some(fields)
         })
         .collect();
-    for fields in vectors.iter().filter(|fields| fields[1] == 2) {
-        let x = fields[2] as u32;
-        let expected = fields[4..].to_vec();
-        let expected_for = |mode| {
-            vectors
-                .iter()
-                .find(|candidate| candidate[1] == mode && candidate[2] == x as i32)
-                .unwrap()[4..]
-                .to_vec()
-        };
+    let expected_for = |mode, x| {
+        vectors
+            .iter()
+            .find(|candidate| candidate[1] == mode && candidate[2] == x)
+            .unwrap()[4..]
+            .to_vec()
+    };
+    for (pool, mode, x) in [(7, 2, 7), (99, 2, 99), (1, 1, 1)] {
+        let expected = expected_for(mode, x);
         let mut map = choose_arg_vector_map();
         let selected = map.choose_args.remove(&-1).unwrap();
         map.choose_args.insert(7, selected.clone());
         map.choose_args.insert(-1, selected);
         map.choose_args.insert(1, vec![None; 3]);
         assert_eq!(
-            pg_to_osds(&map, PgId::new(7, x), 128, 0, &[1 << 16; 4], 3, false).unwrap(),
+            pg_to_osds(&map, PgId::new(pool, 0), 128, 0, &[1 << 16; 4], 3, false).unwrap(),
             expected,
-            "selected x={x}"
-        );
-        assert_eq!(
-            pg_to_osds(&map, PgId::new(99, x), 128, 0, &[1 << 16; 4], 3, false).unwrap(),
-            expected,
-            "default x={x}"
-        );
-        assert_eq!(
-            pg_to_osds(&map, PgId::new(1, x), 128, 0, &[1 << 16; 4], 3, false).unwrap(),
-            expected_for(1),
-            "empty x={x}"
+            "pool={pool}"
         );
         map.choose_args.remove(&-1);
-        assert_eq!(
-            pg_to_osds(&map, PgId::new(99, x), 128, 0, &[1 << 16; 4], 3, false).unwrap(),
-            expected_for(0),
-            "absent x={x}"
-        );
+        if pool == 99 {
+            assert_eq!(
+                pg_to_osds(&map, PgId::new(pool, 0), 128, 0, &[1 << 16; 4], 3, false).unwrap(),
+                expected_for(0, x),
+                "absent x={x}"
+            );
+        }
     }
 }

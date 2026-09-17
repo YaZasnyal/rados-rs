@@ -3663,6 +3663,7 @@ mod tests {
     };
     use bytes::Bytes;
     use serde_json::json;
+    use sha2::{Digest, Sha256};
 
     const CRUSH_TUNABLES: u64 = 1 << 18;
     const CRUSH_TUNABLES2: u64 = 1 << 25;
@@ -3719,10 +3720,23 @@ mod tests {
         let mut crush = CrushMap::new();
         crush.chooseleaf_stable = 1;
         crush.allowed_bucket_algs = (1 << 1) | (1 << 2) | (1 << 4) | (1 << 5);
-        crush.type_names = [(0, "osd"), (1, "host"), (3, "rack"), (11, "root")]
-            .into_iter()
-            .map(|(id, name)| (id, name.to_owned()))
-            .collect();
+        crush.type_names = [
+            (0, "osd"),
+            (1, "host"),
+            (2, "chassis"),
+            (3, "rack"),
+            (4, "row"),
+            (5, "pdu"),
+            (6, "pod"),
+            (7, "room"),
+            (8, "datacenter"),
+            (9, "zone"),
+            (10, "region"),
+            (11, "root"),
+        ]
+        .into_iter()
+        .map(|(id, name)| (id, name.to_owned()))
+        .collect();
         crush.names = [
             (-1, "default"),
             (-2, "localrack"),
@@ -3737,9 +3751,9 @@ mod tests {
         .into_iter()
         .map(|(id, name)| (id, name.to_owned()))
         .collect();
-        store_bucket(&mut crush, straw2_bucket(-1, 11, vec![-2]));
-        store_bucket(&mut crush, straw2_bucket(-2, 3, vec![-3]));
-        store_bucket(&mut crush, straw2_bucket(-3, 1, (0..6).collect()));
+        store_bucket(&mut crush, straw2_bucket(-1, 11, vec![-3]));
+        store_bucket(&mut crush, straw2_bucket(-2, 1, (0..6).collect()));
+        store_bucket(&mut crush, straw2_bucket(-3, 3, vec![-2]));
         crush.max_buckets = 3;
         crush.max_devices = 6;
         crush
@@ -3774,6 +3788,16 @@ mod tests {
                 rule_id: 1,
                 rule_type: RuleType::Erasure,
                 steps: vec![
+                    CrushRuleStep {
+                        op: RuleOp::SetChooseLeafTries,
+                        arg1: 5,
+                        arg2: 0,
+                    },
+                    CrushRuleStep {
+                        op: RuleOp::SetChooseTries,
+                        arg1: 100,
+                        arg2: 0,
+                    },
                     CrushRuleStep {
                         op: RuleOp::Take,
                         arg1: -1,
@@ -3901,10 +3925,11 @@ mod tests {
         temp.apply_to(&mut map).unwrap();
 
         let placement = map.pg_to_placement(&pg).unwrap();
-        assert_eq!(placement.raw, vec![0, 5, 1, 4, 3, 2]);
-        assert_eq!(placement.up, vec![0, 5, 1, 4, 3, 2]);
-        assert_eq!(placement.up_primary, 0);
-        assert_eq!(map.pg_to_osds(&pg).unwrap(), vec![0, 5, 1, 4, 3, 2]);
+        // Pinned build_simple + EC rule 1, x=pool 1 (no HASHPSPOOL).
+        assert_eq!(placement.raw, vec![5, 0, 2, 4, 3, 1]);
+        assert_eq!(placement.up, vec![5, 0, 2, 4, 3, 1]);
+        assert_eq!(placement.up_primary, 5);
+        assert_eq!(map.pg_to_osds(&pg).unwrap(), vec![5, 0, 2, 4, 3, 1]);
         assert_eq!(placement.acting, vec![CRUSH_ITEM_NONE, 6, 7, 8, 9, 10]);
         assert_eq!(placement.acting_primary, 9);
         assert_eq!(map.pg_to_spg_shard(&pg).unwrap(), ShardId::new(4));
@@ -3925,21 +3950,94 @@ mod tests {
             let pg = PgId::new(pool, seed);
             let placement = map.pg_to_placement(&pg).unwrap();
             for &osd in &placement.acting {
-                if osd >= 0 && osd < 6 {
+                if (0..6).contains(&osd) {
                     any[osd as usize] += 1;
                 }
             }
             if let Some(&osd) = placement.acting.first()
-                && osd >= 0
-                && osd < 6
+                && (0..6).contains(&osd)
             {
                 first[osd as usize] += 1;
             }
-            if placement.acting_primary >= 0 && placement.acting_primary < 6 {
+            if (0..6).contains(&placement.acting_primary) {
                 primary[placement.acting_primary as usize] += 1;
             }
         }
         (any, first, primary)
+    }
+
+    fn placement_digest(map: &OSDMap, pool: u64) -> String {
+        let mut digest = Sha256::new();
+        for seed in 0..10_000 {
+            let placement = map.pg_to_placement(&PgId::new(pool, seed)).unwrap();
+            for osds in [&placement.up, &placement.acting] {
+                digest.update((osds.len() as u32).to_be_bytes());
+                for osd in osds {
+                    digest.update(osd.to_be_bytes());
+                }
+            }
+            digest.update(placement.up_primary.to_be_bytes());
+            digest.update(placement.acting_primary.to_be_bytes());
+        }
+        hex::encode(digest.finalize())
+    }
+
+    fn pinned_placement_digest(pool: u64, state: &str) -> String {
+        let values: Vec<_> =
+            include_str!("../../tests/crush/reference/osdmap-primary-affinity-vectors.txt")
+                .lines()
+                .filter(|line| !line.starts_with('#'))
+                .filter_map(|line| {
+                    let fields: Vec<_> = line.split_whitespace().collect();
+                    (fields.len() == 5 && fields[1] == pool.to_string() && fields[2] == state)
+                        .then(|| fields[4])
+                })
+                .collect();
+        assert_eq!(
+            values.len(),
+            2,
+            "pinned releases for pool {pool}, state {state}"
+        );
+        assert_eq!(values[0], values[1], "pinned releases diverge");
+        values[0].to_owned()
+    }
+
+    #[test]
+    fn primary_affinity_matches_pinned_placement_digests() {
+        let mut map = source_six_osd_map();
+        for pool in [1, 2] {
+            assert_eq!(
+                placement_digest(&map, pool),
+                pinned_placement_digest(pool, "default")
+            );
+
+            let mut zero = OSDMapIncremental::new(Epoch::new(map.epoch.as_u32() + 1));
+            zero.new_primary_affinity.insert(0, 0);
+            zero.new_primary_affinity.insert(1, 0);
+            zero.apply_to(&mut map).unwrap();
+            assert_eq!(
+                placement_digest(&map, pool),
+                pinned_placement_digest(pool, "zero")
+            );
+
+            let mut half = OSDMapIncremental::new(Epoch::new(map.epoch.as_u32() + 1));
+            half.new_primary_affinity.insert(0, 0x8000);
+            half.new_primary_affinity.insert(1, 0);
+            half.apply_to(&mut map).unwrap();
+            assert_eq!(
+                placement_digest(&map, pool),
+                pinned_placement_digest(pool, "half")
+            );
+
+            let mut restore = OSDMapIncremental::new(Epoch::new(map.epoch.as_u32() + 1));
+            restore
+                .new_primary_affinity
+                .insert(0, CEPH_OSD_DEFAULT_PRIMARY_AFFINITY);
+            restore
+                .new_primary_affinity
+                .insert(1, CEPH_OSD_DEFAULT_PRIMARY_AFFINITY);
+            restore.apply_to(&mut map).unwrap();
+        }
     }
 
     // Upstream: v17.2.7/src/test/osd/TestOSDMap.cc::OSDMapTest.PrimaryAffinity
@@ -4156,6 +4254,105 @@ mod tests {
         remove.old_pg_upmap_items.push(pg);
         remove.apply_to(&mut map).unwrap();
         assert_eq!(map.pg_to_placement(&pg).unwrap().up, vec![3, 5, 1]);
+    }
+
+    // Upstream: v17.2.7/src/osd/OSDMap.cc::_apply_upmap
+    // Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/osd/OSDMap.cc#L2432
+    // Upstream: v20.2.4/src/osd/OSDMap.cc::_apply_upmap
+    // Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/osd/OSDMap.cc#L2803
+    #[test]
+    fn upmap_special_values_follow_source_validity_predicates() {
+        let pg = PgId::new(2, 0);
+        let mut map = source_six_osd_map();
+
+        let mut full_none = OSDMapIncremental::new(Epoch::new(3));
+        full_none
+            .new_pg_upmap
+            .insert(pg, vec![CRUSH_ITEM_NONE, 2, 4]);
+        full_none.apply_to(&mut map).unwrap();
+        let mut raw = vec![3, 5, 1];
+        map.apply_upmap(&pg, &mut raw);
+        assert_eq!(raw, vec![CRUSH_ITEM_NONE, 2, 4]);
+        assert_eq!(
+            map.pg_to_placement(&pg).unwrap(),
+            PgPlacement {
+                raw: vec![3, 5, 1],
+                up: vec![2, 4],
+                acting: vec![2, 4],
+                up_primary: 2,
+                acting_primary: 2,
+            }
+        );
+
+        let mut item_none = OSDMapIncremental::new(Epoch::new(4));
+        item_none.old_pg_upmap.push(pg);
+        item_none
+            .new_pg_upmap_items
+            .insert(pg, vec![(5, CRUSH_ITEM_NONE)]);
+        item_none.apply_to(&mut map).unwrap();
+        let mut raw = vec![3, 5, 1];
+        map.apply_upmap(&pg, &mut raw);
+        assert_eq!(raw, vec![3, CRUSH_ITEM_NONE, 1]);
+        assert_eq!(
+            map.pg_to_placement(&pg).unwrap(),
+            PgPlacement {
+                raw: vec![3, 5, 1],
+                up: vec![3, 1],
+                acting: vec![3, 1],
+                up_primary: 3,
+                acting_primary: 3,
+            }
+        );
+
+        let mut no_items = OSDMapIncremental::new(Epoch::new(5));
+        no_items.old_pg_upmap_items.push(pg);
+        no_items.apply_to(&mut map).unwrap();
+        for (epoch, primary) in [(6, 99), (7, -2), (8, CRUSH_ITEM_NONE)] {
+            let mut ignored = OSDMapIncremental::new(Epoch::new(epoch));
+            ignored.new_pg_upmap_primary.insert(pg, primary);
+            ignored.apply_to(&mut map).unwrap();
+            assert_eq!(
+                map.pg_to_placement(&pg).unwrap(),
+                PgPlacement {
+                    raw: vec![3, 5, 1],
+                    up: vec![3, 5, 1],
+                    acting: vec![3, 5, 1],
+                    up_primary: 3,
+                    acting_primary: 3,
+                },
+                "primary {primary}"
+            );
+        }
+
+        let mut out = OSDMapIncremental::new(Epoch::new(9));
+        out.new_weight.insert(5, 0);
+        out.new_pg_upmap_primary.insert(pg, 5);
+        out.apply_to(&mut map).unwrap();
+        assert_eq!(
+            map.pg_to_placement(&pg).unwrap(),
+            PgPlacement {
+                raw: vec![3, 1, 0],
+                up: vec![3, 1, 0],
+                acting: vec![3, 1, 0],
+                up_primary: 3,
+                acting_primary: 3,
+            }
+        );
+
+        let mut valid = OSDMapIncremental::new(Epoch::new(10));
+        valid.new_weight.insert(5, 0x1_0000);
+        valid.new_pg_upmap_primary.insert(pg, 5);
+        valid.apply_to(&mut map).unwrap();
+        assert_eq!(
+            map.pg_to_placement(&pg).unwrap(),
+            PgPlacement {
+                raw: vec![3, 5, 1],
+                up: vec![5, 3, 1],
+                acting: vec![5, 3, 1],
+                up_primary: 5,
+                acting_primary: 5,
+            }
+        );
     }
 
     // Upstream: v20.2.4/src/test/osd/TestOSDMap.cc::OSDMapTest.pgtemp_primaryfirst

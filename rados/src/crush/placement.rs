@@ -346,8 +346,12 @@ pub fn pg_to_osds(
 
 /// Compute the `pps` (placement seed) C++ feeds to CRUSH and to the
 /// primary-affinity hash.  Mirrors `pg_pool_t::raw_pg_to_pps`: fold
-/// `pg.seed` onto `pgp_num` via `ceph_stable_mod`, then optionally
-/// hash with the pool id (`hashpspool`).
+/// `pg.seed` onto `pgp_num` via `ceph_stable_mod`, then hash with the
+/// pool id for `hashpspool` pools or add the pool id for legacy pools.
+///
+/// Source: `src/osd/osd_types.cc::pg_pool_t::raw_pg_to_pps` in Ceph
+/// Quincy `b12291d110049b2f35e32e0de30d70e9a4c060d2` and Tentacle
+/// `7f793731f1b39eb4f465e960113d2363c311b964`.
 ///
 /// Skipping the `ceph_stable_mod` fold is what produces a different
 /// CRUSH input on the client vs OSD side during an autoscaler-driven
@@ -363,7 +367,7 @@ pub fn pg_to_pps(pg: PgId, pgp_num: u32, hashpspool: bool) -> u32 {
         use crate::crush::hash::crush_hash32_2;
         crush_hash32_2(pps_seed, pg.pool as u32)
     } else {
-        pps_seed
+        pps_seed.wrapping_add(pg.pool as u32)
     }
 }
 
@@ -437,6 +441,15 @@ mod tests {
         assert_eq!(pg.pool, 1);
         assert_eq!(pg.seed, 0x2a);
         assert_eq!(format!("{pg}"), "1.2a");
+    }
+
+    #[test]
+    fn pg_to_pps_adds_legacy_pool_and_hashes_hashpspool_pool() {
+        let pg = PgId::new(2, 74);
+        // `74 & 63` folds to 10.  Pinned `raw_pg_to_pps` adds pool 2
+        // without HASHPSPOOL and hashes `(10, 2)` with it.
+        assert_eq!(pg_to_pps(pg, 64, false), 12);
+        assert_eq!(pg_to_pps(pg, 64, true), 1_838_530_675);
     }
 
     #[test]
