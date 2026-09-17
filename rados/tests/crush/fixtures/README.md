@@ -21,7 +21,7 @@ histograms. Console formatting and the map-modified advisory are CLI-only
 and are not asserted. The helper checks the complete seed sequence and
 sample count and internal histogram consistency before invoking the mapper,
 so an early mapper failure cannot hide incomplete fixture data. See the
-[execution report](../test-parity.md#stage-2-mapper-fixes) for the original
+[execution history](../../../../.notes/crush/test-parity-history.md#stage-2-mapper-fixes) for the original
 failures, mapper corrections and passing results.
 
 Provenance: paths in the table are relative to `src/test/cli/crushtool/`;
@@ -57,7 +57,7 @@ does not replace it.
 
 ## Generated mapper regressions
 
-[`mapper-regressions.c`](mapper-regressions.c) is a local input generator,
+[`mapper-regressions.c`](../reference/mapper-regressions.c) is a local input generator,
 linked with unmodified Ceph `src/crush/mapper.c` and `hash.c`. It is not an
 upstream test port and contains no Rust-derived expected values. Sources:
 [Quincy mapper](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/crush/mapper.c),
@@ -126,7 +126,7 @@ with tempfile.TemporaryDirectory() as directory:
             ['git', '-C', str(ceph), 'show', f'{revision}:src/include/int_types.h']))
         (root / 'acconfig.h').touch()
         command = ['clang', '-std=gnu99', '-O2', f'-I{root}',
-                   str(fixtures / 'mapper-regressions.c'), str(root / 'mapper.c'),
+                   str(fixtures.parent / 'reference/mapper-regressions.c'), str(root / 'mapper.c'),
                    str(root / 'hash.c'), '-o', str(root / 'run')]
         if release == 'quincy':
             command.append('-DQUINCY')

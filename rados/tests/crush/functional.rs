@@ -59,9 +59,8 @@ fn store_bucket(map: &mut CrushMap, bucket: CrushBucket) {
     map.buckets[index] = Some(bucket);
 }
 
-fn build_map(mode: Mode, family: Family, racks: usize, hosts: usize, osds: usize) -> CrushMap {
+fn optimal_map() -> CrushMap {
     let mut map = CrushMap::new();
-    map.max_devices = (racks * hosts * osds) as i32;
     map.choose_local_tries = 0;
     map.choose_local_fallback_tries = 0;
     map.choose_total_tries = 50;
@@ -69,6 +68,12 @@ fn build_map(mode: Mode, family: Family, racks: usize, hosts: usize, osds: usize
     map.chooseleaf_vary_r = 1;
     map.chooseleaf_stable = 1;
     map.allowed_bucket_algs = (1 << 1) | (1 << 2) | (1 << 4) | (1 << 5);
+    map
+}
+
+fn build_map(mode: Mode, family: Family, racks: usize, hosts: usize, osds: usize) -> CrushMap {
+    let mut map = optimal_map();
+    map.max_devices = (racks * hosts * osds) as i32;
 
     let mut next_bucket = -2;
     let mut next_osd = 0;
@@ -456,3 +461,230 @@ variants!(
     out_progressive,
     Family::FirstN
 );
+
+// Mirrors create_crush_heirarchy and msr_multi_root's populate_root: roots
+// and hosts are STRAW2, IDs follow insertion order, all OSDs weigh 1.0.
+fn build_msr_map(
+    roots: i32,
+    hosts: i32,
+    osds: i32,
+    choose_hosts: i32,
+    choose_osds: i32,
+) -> CrushMap {
+    let mut map = optimal_map();
+    map.max_devices = roots * hosts * osds;
+    let mut steps = Vec::new();
+    for root in 0..roots {
+        let root_id = -1 - map.buckets.len() as i32;
+        map.buckets.push(None);
+        let mut host_ids = Vec::new();
+        for host in 0..hosts {
+            let id = -1 - map.buckets.len() as i32;
+            let first = (root * hosts + host) * osds;
+            store_bucket(
+                &mut map,
+                bucket(id, 1, (first..first + osds).collect(), WEIGHT),
+            );
+            host_ids.push(id);
+        }
+        store_bucket(&mut map, bucket(root_id, 2, host_ids, osds as u32 * WEIGHT));
+        steps.extend([
+            step(RuleOp::Take, root_id, 0),
+            step(RuleOp::ChooseMsr, choose_hosts, 1),
+            step(RuleOp::ChooseMsr, choose_osds, 0),
+            step(RuleOp::Emit, 0, 0),
+        ]);
+    }
+    map.max_buckets = map.buckets.len() as i32;
+    map.max_rules = 1;
+    map.rules = vec![Some(CrushRule {
+        rule_id: 0,
+        rule_type: RuleType::MsrIndep,
+        steps,
+    })];
+    map
+}
+
+fn take_host_out(weights: &mut [u32], osd: i32, osds_per_host: usize) {
+    let first = osd as usize / osds_per_host * osds_per_host;
+    weights[first..first + osds_per_host].fill(0);
+}
+
+fn check_msr_host_replacement(
+    hosts: i32,
+    osds: i32,
+    choose_hosts: i32,
+    per_host: usize,
+    count: usize,
+) {
+    let map = build_msr_map(1, hosts, osds, choose_hosts, per_host as i32);
+    let mut weights = vec![WEIGHT; map.max_devices as usize];
+    let before = place(&map, 0, count, &weights);
+    assert_eq!(before.len(), count);
+    assert!(
+        before
+            .iter()
+            .all(|&osd| (0..map.max_devices).contains(&osd))
+    );
+    take_host_out(&mut weights, before[0], osds as usize);
+    let after = place(&map, 0, count, &weights);
+    assert_eq!(after.len(), count);
+    for i in 0..per_host {
+        assert_ne!(before[i], after[i]);
+        assert!((0..map.max_devices).contains(&after[i]));
+        assert_ne!(before[i] / osds, after[i] / osds);
+    }
+    assert_eq!(before[per_host..], after[per_host..]);
+}
+
+// Upstream: v20.2.4/src/test/crush/crush.cc::CRUSHTest.msr_4_host_2_choose_rule
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L1277
+#[test]
+fn msr_4_host_2_choose_rule() {
+    let map = build_msr_map(1, 4, 3, 3, 1);
+    let all_in = vec![WEIGHT; 12];
+    let before = place(&map, 0, 3, &all_in);
+    assert_eq!(before.len(), 3);
+    assert!(before.iter().all(|&osd| (0..12).contains(&osd)));
+    let mut host_out = all_in.clone();
+    take_host_out(&mut host_out, before[0], 3);
+    let mut osd_out = all_in;
+    osd_out[before[0] as usize] = 0;
+    for weights in [host_out, osd_out] {
+        let after = place(&map, 0, 3, &weights);
+        assert_eq!(after.len(), 3);
+        assert_eq!(
+            before.iter().filter(|&&osd| osd != NONE).count(),
+            after.iter().filter(|&&osd| osd != NONE).count()
+        );
+    }
+}
+
+// Upstream: v20.2.4/src/test/crush/crush.cc::CRUSHTest.msr_2_host_2_osd
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L1325
+#[test]
+fn msr_2_host_2_osd() {
+    check_msr_host_replacement(3, 2, 2, 2, 3);
+}
+
+// Upstream: v20.2.4/src/test/crush/crush.cc::CRUSHTest.msr_5_host_8_6_ec_choose
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L1371
+#[test]
+fn msr_5_host_8_6_ec_choose() {
+    check_msr_host_replacement(5, 4, 4, 4, 14);
+}
+
+fn validate_multi_root(out: &[i32]) {
+    assert_eq!(out.len(), 8);
+    let mut hosts = HashSet::new();
+    for (group, items) in out.chunks_exact(2).enumerate() {
+        // Additional coverage: upstream looks up out[start] for every item.
+        // Check each item's root and all hosts used by each failure domain.
+        let mut group_hosts = HashSet::new();
+        for &osd in items {
+            assert!((0..24).contains(&osd));
+            assert_eq!(osd / 12, (group / 2) as i32);
+            group_hosts.insert(osd / 3);
+        }
+        for host in group_hosts {
+            assert!(
+                hosts.insert(host),
+                "host {host} reused across failure domains: {out:?}"
+            );
+        }
+    }
+}
+
+// Upstream: v20.2.4/src/test/crush/crush.cc::CRUSHTest.msr_multi_root
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush.cc#L1417
+#[test]
+fn msr_multi_root() {
+    let map = build_msr_map(2, 4, 3, 2, 2);
+    let all_in = vec![WEIGHT; 24];
+    for x in 0..1000 {
+        let before = place(&map, x, 8, &all_in);
+        validate_multi_root(&before);
+
+        let mut osd_out = all_in.clone();
+        for i in [1, 5] {
+            osd_out[before[i] as usize] = 0;
+        }
+        let after = place(&map, x, 8, &osd_out);
+        validate_multi_root(&after);
+        for i in 0..8 {
+            if [1, 5].contains(&i) {
+                assert_ne!(before[i], after[i], "x={x}, position={i}");
+            } else {
+                assert_eq!(before[i], after[i], "x={x}, position={i}");
+            }
+        }
+
+        let mut host_out = all_in.clone();
+        for i in [2, 6] {
+            take_host_out(&mut host_out, before[i], 3);
+        }
+        let after = place(&map, x, 8, &host_out);
+        validate_multi_root(&after);
+        for i in 0..8 {
+            if host_out[before[i] as usize] == 0 {
+                assert_ne!(before[i], after[i], "x={x}, position={i}");
+            } else {
+                assert_eq!(before[i], after[i], "x={x}, position={i}");
+            }
+        }
+    }
+}
+
+fn weight_distribution_deviation(replicas: usize) -> i64 {
+    // CrushCompiler::compile starts with legacy tunables when the text
+    // map supplies none, as in crush_weights.sh. Preserve that profile.
+    let mut map = CrushMap::new();
+    map.max_buckets = 1;
+    map.max_devices = 5;
+    map.max_rules = 1;
+    let mut root = bucket(-1, 1, (0..5).collect(), WEIGHT);
+    root.weight = 41 * WEIGHT;
+    root.data = BucketData::Straw2 {
+        item_weights: vec![10 * WEIGHT, 10 * WEIGHT, 10 * WEIGHT, 10 * WEIGHT, WEIGHT],
+    };
+    map.buckets = vec![Some(root)];
+    map.rules = vec![Some(CrushRule {
+        rule_id: 0,
+        rule_type: RuleType::Replicated,
+        steps: vec![
+            step(RuleOp::Take, -1, 0),
+            step(RuleOp::ChooseFirstN, 0, 0),
+            step(RuleOp::Emit, 0, 0),
+        ],
+    })];
+    let mut counts = [0i64; 5];
+    let mut out = Vec::new();
+    for x in 1..=1_000_000 {
+        crush_do_rule(&map, 0, x, &mut out, replicas, &[WEIGHT; 5]).unwrap();
+        for &osd in &out {
+            counts[osd as usize] += 1;
+        }
+    }
+    // bc scale=5 truncates the positive division before subtracting from 10.
+    10 * 100_000 - counts[0] * 100_000 / counts[4]
+}
+
+// Upstream (locally assigned block name):
+// v17.2.7/src/test/crush/crush_weights.sh::three-replica-distribution
+// Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush_weights.sh#L44
+// v20.2.4/src/test/crush/crush_weights.sh::three-replica-distribution
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush_weights.sh#L44
+#[test]
+fn three_replica_weight_distribution() {
+    assert!(weight_distribution_deviation(3) >= 75_000);
+}
+
+// Upstream (locally assigned block name):
+// v17.2.7/src/test/crush/crush_weights.sh::one-replica-distribution
+// Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/crush/crush_weights.sh#L53
+// v20.2.4/src/test/crush/crush_weights.sh::one-replica-distribution
+// Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/crush/crush_weights.sh#L53
+#[test]
+fn one_replica_weight_distribution() {
+    assert!((-10_000..=10_000).contains(&weight_distribution_deviation(1)));
+}
