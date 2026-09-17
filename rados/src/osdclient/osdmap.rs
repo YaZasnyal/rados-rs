@@ -3246,7 +3246,7 @@ impl OSDMap {
                         .values()
                         .flatten()
                         .flatten()
-                        .any(|arg| arg.weight_set.len() != 1 || !arg.ids.is_empty()))
+                        .any(|arg| arg.weight_set.len() > 1 || !arg.ids.is_empty()))
             {
                 features |= CEPH_FEATUREMASK_CRUSH_CHOOSE_ARGS;
             }
@@ -3769,6 +3769,7 @@ mod tests {
     const OSDMAP_PG_UPMAP: u64 = (1 << 21) | (1 << 57);
     const SERVER_REEF: u64 = (1 << 31) | (1 << 28) | (1 << 57);
     const STRETCH_MODE: u64 = 1 << 32;
+    const CRUSH_CHOOSE_ARGS: u64 = 1 << 21;
     const CRUSH_FEATURE_MASK_QUINCY: u64 = CRUSH_TUNABLES
         | CRUSH_TUNABLES2
         | CRUSH_TUNABLES3
@@ -4025,6 +4026,46 @@ mod tests {
             assert_eq!(osd_mask & STRETCH_MODE, STRETCH_MODE);
             assert_eq!(client_features & STRETCH_MODE, 0);
             assert_eq!(client_mask & STRETCH_MODE, 0);
+        }
+    }
+
+    #[test]
+    fn get_features_ignores_empty_default_choose_arg() {
+        let mut map = OSDMap::new();
+        let mut crush = six_osd_crush_map();
+        // This is the decoder's wire shape for index -1, bucket 0, with zero
+        // weight-set positions and zero IDs.
+        crush.choose_args.insert(
+            -1,
+            vec![Some(crate::crush::CrushChooseArg::default()), None, None],
+        );
+        map.crush = Some(crush);
+
+        for release in [OSDMapFeatureRelease::Quincy, OSDMapFeatureRelease::Tentacle] {
+            assert_eq!(
+                map.get_features_for_release(release, crate::EntityType::CLIENT)
+                    .0
+                    & CRUSH_CHOOSE_ARGS,
+                0
+            );
+        }
+
+        map.crush
+            .as_mut()
+            .unwrap()
+            .choose_args
+            .get_mut(&-1)
+            .unwrap()[0] = Some(crate::crush::CrushChooseArg {
+            weight_set: Vec::new(),
+            ids: vec![-2],
+        });
+        for release in [OSDMapFeatureRelease::Quincy, OSDMapFeatureRelease::Tentacle] {
+            assert_eq!(
+                map.get_features_for_release(release, crate::EntityType::CLIENT)
+                    .0
+                    & CRUSH_CHOOSE_ARGS,
+                CRUSH_CHOOSE_ARGS
+            );
         }
     }
 
