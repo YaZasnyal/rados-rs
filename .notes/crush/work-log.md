@@ -299,6 +299,7 @@ Both C implementations and Rust have complete-output digests
 `12722a47fde289ef`, `32c9040dd1425108` (12 differences), and
 `65e72f17e5a64b0b`. Reference libc reports unseeded `rand()%10 == 7`, yielding
 the original integer-divided weight 45871. `straw2_stddev` is Not ported: it
-only prints diagnostics. The initial STRAW placeholder-length RED and the
-harness-only pre-port C/Rust mismatch are logged in `task-2-initial-focused.log`
-and `task-2-reference-initial.log`; no production change was needed.
+only prints diagnostics. `task-2-initial-focused.log` records 3 focused passes
+in 7.04s before any production change. The separately retained
+`task-2-reference-initial.log` is only a C/Rust audit-harness evolution mismatch
+while new C scenarios preceded their Rust comparison, never a behavior failure.
