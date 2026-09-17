@@ -26,3 +26,6 @@ mod classes;
 
 #[path = "crush/legacy_buckets.rs"]
 mod legacy_buckets;
+
+#[path = "crush/weight_topology.rs"]
+mod weight_topology;

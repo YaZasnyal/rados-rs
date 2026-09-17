@@ -117,6 +117,38 @@ All four Tentacle binaries equal the respective Quincy bytes followed by
 two little-endian u32 MSR defaults (100/100). Both encodings are checked in
 and decoded by Cargo tests, which need neither Docker nor a Ceph checkout.
 
+## Retained weight and topology consumers
+
+`generate-weight-topology-reference.py ../ceph --check` imports the identical
+`reweight.t`, `reweight_multiple.t`, `multitype.*`, and
+`simple.template.multitree*` sources from both pins, compiles their final
+states, and captures every ordered mapping used by `weight_topology.rs`.
+It also compiles source-shaped maps for `CrushWrapperTest.adjust_item_weight`,
+`adjust_subtree_weight`, and `test_crushdiff.sh`: 128 one-replica rows for
+each retained state and 1,000 three-replica rows before/after the six-OSD
+crushdiff change. The latter has exactly 384 changed rows in both releases.
+
+`TEST_crush_bucket` is captured from the existing self-cleaning pinned
+one-MON/three-OSD runner. The generator performs its exact get/decompile,
+ID/item/weight extraction, insertion, compilation, and empty-stderr check,
+then retains the emitted blob. Both captures contain `host test` at `-3`, a
+legacy STRAW item `-2` of raw weight `195`, and straw length `65536`.
+The complete function is byte-identical at [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/test_crush_bucket.sh#L25)
+and [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/test_crush_bucket.sh#L25),
+SHA256 `46099b31dd2735d7b6cdb658e91ef94bee0c7ca32b8f77a77e92ae50e84c2406`.
+Compiler stderr remains producer-only.
+
+| Generated file family | Quincy / Tentacle SHA256 |
+| --- | --- |
+| `weight-topology-adjust-before` | `9a7f8e3bf24df2d2ad8d1e5cbe196d1e7f989144647d57f51a41c2e5204e4391` / `e1451553d1b7fff0419ef52f5f1a1cf3d16619dde51100cd16e8e8b4a526efc6` |
+| `weight-topology-adjust-item-after` | `b4b09589d945aa49d772710b1ccd61a358597065a50e19e255ff75a7f88e2097` / `5906bf791b8839354ad762c422fa150297d0e10f498b46e13f09e6607d3e841f` |
+| `weight-topology-adjust-subtree-after` | `2d9b7a58e54ddbb6ee6e5be10c70e7e5c73c714fca9cefd6c394c1fb92aa07de` / `84cc345fae1db888f80942823e4e1c5efba6e5e8a3a5d83c3228a104450610c1` |
+| `weight-topology-multitype-after` | `88e6256147655b58411f8f5e292474a8b7e6587cdf564c25f79171e7310c7395` / `99de1a60c2d022920d3d1ca5f0fb31e9e303cdac7a17faf6c261dfc567259b67` |
+| `weight-topology-multitree-after` | `3f07c6fbc256b08504c68690b3e0c6ac9bdb51f70814d0fcd3530a9010109250` / `4fb9a4266686c25434ca53ef4eaa9a466180a11903e4067dfa357fa42e49d273` |
+| `weight-topology-crushdiff-before/after` | `25c27157347f02459b381b14a8cfa76f5cc38f89d67936f3fb87140a599a29b7` / `6739e91eba6efe197f6b58c1f1861ea392e844ccabdb24955f4297c819d41cef`; `3f4b7a8f163cc7c7ffbb2023ed921ce0378a558765528b9733b9aa2177f52834` / `5691e8441abb0cb7df7b6de00955692e988fed479187258444464e85af8da23a` |
+| `weight-topology-added-straw` | `2b929333964ca6f6645848b7df6fcf7df208710cbecc588c106865a74ae16c15` / `e071c797bd656d9d9f6331781ee54335119fb332003108877b1c434ac11457aa` |
+| `weight-topology-vectors.txt` | `3251593dd8c29ebea34e7b5d12fbb8d461dc5445e9ff55a6036ca6deacec19bd` |
+
 ## Legacy Uniform, List, and TREE buckets
 
 `generate-legacy-bucket-reference.py ../ceph --check` verifies and regenerates

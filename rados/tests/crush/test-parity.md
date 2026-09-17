@@ -23,7 +23,7 @@ differs; otherwise verify and reuse the existing one.
 
 ## Ported tests
 
-**92 tests pass, none ignored.** These establish the scenarios below, not
+**98 tests pass, none ignored.** These establish the scenarios below, not
 complete CRUSH or end-to-end client compatibility.
 
 | Family | Ceph coverage retained | Rust tests | Status |
@@ -40,6 +40,7 @@ complete CRUSH or end-to-end client compatibility.
 | Retry-profile observation, both releases | `show-choose-tries.t` rule 0 FIRSTN/count 2 and rule 1 INDEP/count 1: both full 50-bin profiles, distinct fresh commands | [profile.rs](profile.rs) | Passing with both compiled encodings; caller-owned batch profile accumulates, explicit start resets, and stop discards |
 | Device classes and reclassification, both releases | decoded class/shadow lifecycle, ten successful `reclassify.t` pairs, and pinned C placement results | [classes.rs](classes.rs) | Coverage: Ported; Readiness: Ready now; Verification: Passing. Producer/editor APIs remain outside client scope. |
 | Legacy Uniform/List/TREE, both releases | `add-item-in-tree.t` final TREE map, all three rules, and 352 pinned-C ordered vectors. Uniform/List are minimal local C differential contracts for complete, collision, retry, and NONE-hole partial-availability cases. | [legacy_buckets.rs](legacy_buckets.rs) | Coverage: Ported; Readiness: Ready now; Verification: Passing. TREE `num_nodes` decodes as its C wire `u8`; compiler/editor APIs remain outside client scope. |
+| Retained weight/topology consumers, both releases | `adjust_item_weight`, `adjust_subtree_weight`, `reweight.t`, `reweight_multiple.t`, `test_crushdiff.sh`, and `TEST_crush_bucket`; 5,536 exact pinned-C ordered rows | [weight_topology.rs](weight_topology.rs) | Coverage: Ported; Readiness: Ready now; Verification: Passing. The emitted shell maps come from a self-cleaning pinned one-MON/three-OSD capture; compiler stderr remains producer-only. |
 | Additional mapper regressions | Eight local tests, including 12,600 vectors generated from pinned C mappers | [regressions.rs](regressions.rs) | Passing; additional coverage, not upstream test ports |
 
 The golden scenarios are `bobtail_tunables`, `firefly_tunables`,

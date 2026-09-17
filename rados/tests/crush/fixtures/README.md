@@ -35,6 +35,18 @@ release variants and checks the original transcripts. The earlier
 `functional::bad_mappings` direct-assembly test remains supplementary coverage
 of the same two cases, not two additional upstream scenarios.
 
+The following additional unmodified crushtool inputs are retained for the
+weight/topology consumer tests. They are byte-identical at the two pins;
+generated binaries and exact mapping vectors are documented in
+[reference](../reference/README.md#retained-weight-and-topology-consumers).
+
+| File | Source v17.2.7 / v20.2.4 | SHA256 |
+| --- | --- | --- |
+| `reweight.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/reweight.t) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/reweight.t) | `480006f39eb3dca311b0cf28f499841ba48394716ff3a191fa6197b1c6c5583f` |
+| `reweight_multiple.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/reweight_multiple.t) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/reweight_multiple.t) | `ffa02cffa4e6a8887ba74b75b2c2fdc14105c37b013e9621677d02ebc542aa53` |
+| `multitype.before` / `multitype.after` | [Quincy](https://github.com/ceph/ceph/tree/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool) / [Tentacle](https://github.com/ceph/ceph/tree/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool) | `0cdd4049797af8f536ffbc0088e2be3f06bc6a593dd444a966158720dcd10e20` / `65bb0dab74430497c14d0aec6f7c450aefa587f7d0b2157a03a62d5711b7baf0` |
+| `simple.template.multitree` / `.reweighted` | [Quincy](https://github.com/ceph/ceph/tree/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool) / [Tentacle](https://github.com/ceph/ceph/tree/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool) | `e822339b487ae559ba24776fd7eb659325e4f54915cf04f6be2d984aba287ed3` / `fe641197e22d776e46800b9ef04eaad063e0b8f940355f9d45d08bcb0c24d9fe` |
+
 Provenance: paths in the table are relative to `src/test/cli/crushtool/`;
 links point to the exact releases above. Adaptations to fixture bytes: none.
 `cmd-NN` in test source comments is a locally assigned identifier for the
