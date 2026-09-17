@@ -370,32 +370,6 @@ fn qa_choose_args_states_match_pinned_c_placement_vectors() {
     ];
     for (name, bytes, index) in maps {
         let map = decode_fixture(bytes);
-        if matches!(name, "update-pre" | "update-remove") {
-            let args = &map.choose_args[&0];
-            assert_eq!(
-                args[0].as_ref().unwrap().weight_set,
-                vec![vec![2 << 16], vec![2 << 16]]
-            );
-            assert_eq!(args[0].as_ref().unwrap().ids, vec![-10]);
-            assert_eq!(
-                args[1].as_ref().unwrap().weight_set,
-                vec![vec![2 << 16], vec![2 << 16]]
-            );
-            assert_eq!(args[1].as_ref().unwrap().ids, vec![-20]);
-        }
-        if matches!(name, "no-update-pre" | "no-update-remove") {
-            let args = &map.choose_args[&0];
-            assert_eq!(
-                args[0].as_ref().unwrap().weight_set,
-                vec![vec![2 << 16], vec![1 << 16]]
-            );
-            assert_eq!(args[0].as_ref().unwrap().ids, vec![-10]);
-            assert_eq!(
-                args[1].as_ref().unwrap().weight_set,
-                vec![vec![2 << 16], vec![1 << 16]]
-            );
-            assert_eq!(args[1].as_ref().unwrap().ids, vec![-20]);
-        }
         for line in include_str!("reference/qa-choose-args-vectors.txt")
             .lines()
             .filter(|line| !line.starts_with('#'))
@@ -519,8 +493,48 @@ fn qa_intermediate_states_match_pinned_c_placement_vectors() {
             -1,
         ),
     ];
+    let mut index_zero_metadata_cases = 0;
     for (name, bytes, index) in maps {
         let map = decode_fixture(bytes);
+        match name {
+            "update-pre" | "update-remove" => {
+                index_zero_metadata_cases += 1;
+                assert!(
+                    !map.choose_args.contains_key(&-1),
+                    "{name} must not fall back"
+                );
+                let args = map.choose_args.get(&0).unwrap();
+                assert_eq!(
+                    args[0].as_ref().unwrap().weight_set,
+                    vec![vec![2 << 16], vec![2 << 16]]
+                );
+                assert_eq!(args[0].as_ref().unwrap().ids, vec![-10]);
+                assert_eq!(
+                    args[1].as_ref().unwrap().weight_set,
+                    vec![vec![2 << 16], vec![2 << 16]]
+                );
+                assert_eq!(args[1].as_ref().unwrap().ids, vec![-20]);
+            }
+            "no-update-pre" | "no-update-remove" => {
+                index_zero_metadata_cases += 1;
+                assert!(
+                    !map.choose_args.contains_key(&-1),
+                    "{name} must not fall back"
+                );
+                let args = map.choose_args.get(&0).unwrap();
+                assert_eq!(
+                    args[0].as_ref().unwrap().weight_set,
+                    vec![vec![2 << 16], vec![1 << 16]]
+                );
+                assert_eq!(args[0].as_ref().unwrap().ids, vec![-10]);
+                assert_eq!(
+                    args[1].as_ref().unwrap().weight_set,
+                    vec![vec![2 << 16], vec![1 << 16]]
+                );
+                assert_eq!(args[1].as_ref().unwrap().ids, vec![-20]);
+            }
+            _ => {}
+        }
         let (bucket_id, canonical, alternate) = match name {
             "update-pre" | "update-remove" | "no-update-pre" | "no-update-remove" => (-2, 3, 2),
             "reweight-create" => (-2, 6, 6),
@@ -570,6 +584,7 @@ fn qa_intermediate_states_match_pinned_c_placement_vectors() {
             assert_eq!(actual, fields[1..], "{name} x={}", fields[0]);
         }
     }
+    assert_eq!(index_zero_metadata_cases, 4);
 }
 
 fn choose_arg_vector_map() -> CrushMap {
