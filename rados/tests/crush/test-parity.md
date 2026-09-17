@@ -162,7 +162,32 @@ mappings per rule on each before/after side, and their original nonzero
 movements. `gabe` is explicitly the producer/editor failure. Captured
 `TEST_mon_classes` states cover removal, retained `asdf`, moved `abc`, and
 `class_1` to `class_2` rename metadata plus C/Rust filtered placement. The
-original `SOMETHING` write remains task9 scope.
+original `SOMETHING` write is retained by the live gate below.
+
+## Retained live class and erasure consumers — 2026-09-18
+
+Coverage: Ported. Readiness: Ready now. Verification: Passing on Quincy
+v17.2.7 and Tentacle v20.2.4. The ignored live gate uses a fresh bounded
+fixture for each observation: three OSDs for `TEST_reweight_vs_classes` and
+`TEST_mon_classes`, and one OSD for `TEST_crush_rule_create_erasure`.
+`TEST_reweight_vs_classes` captures live pre/post maps, checks canonical and
+`~ssd` host item weights `65536 -> 131072`, and compares 16 pinned-C/Rust
+placements per map. `TEST_mon_classes` preserves the initial ordered
+`[1,2,0]` assertion and performs Rust's `SOMETHING` write before lifecycle
+mutations. The erasure consumer decodes both implicitly-default and explicitly
+default-profile generated `rule3` maps, including all five generated steps,
+and compares 16 C/Rust placements per map. XML, duplicate-command, profile-log
+and monitor response formatting remain producer-only.
+
+Run all retained gates for a release with:
+
+```sh
+bash rados/tests/crush/reference/live-rust-crush-gates.sh quincy all
+bash rados/tests/crush/reference/live-rust-crush-gates.sh tentacle all
+```
+
+The optional final selector (`class-pool`, `reweight`, `mon-classes`, or
+`erasure`) starts and removes one fixture for the named gate.
 
 CRUSH editor/compiler/formatter and monitor/balancer tests are not native
 client API ports. Their resulting maps and placement effects still need

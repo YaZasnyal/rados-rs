@@ -3,6 +3,9 @@
 set -euo pipefail
 umask 077
 live_dir=$(mktemp -d /tmp/rados-mon-classes.XXXXXX)
+osds=${CRUSH_PREFLIGHT_OSDS:-3}
+create_rbd=${CRUSH_PREFLIGHT_RBD:-1}
+test "$osds" -ge 1 && test "$osds" -le 3
 trap 'status=$?; for pid in $(jobs -pr); do kill "$pid" 2>/dev/null || true; done; wait || true; rm -rf "$live_dir"; exit "$status"' EXIT
 export CEPH_CONF="$live_dir/ceph.conf"
 cat > "$CEPH_CONF" <<EOF
@@ -42,7 +45,7 @@ for attempt in $(seq 1 30); do
   [ "$attempt" -ne 30 ]
   sleep 1
 done
-for id in 0 1 2; do
+for id in $(seq 0 $((osds - 1))); do
   mkdir "$live_dir/osd.$id"
   osd_uuid=$(uuidgen)
   test "$(ceph osd new "$osd_uuid")" = "$id"
@@ -50,15 +53,17 @@ for id in 0 1 2; do
   ceph-osd -i "$id" -f > "$live_dir/osd.$id.stdout.log" 2>&1 &
 done
 for attempt in $(seq 1 60); do
-  if ceph osd dump -f json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); assert len(d["osds"]) == 3 and all(x["up"] and x["in"] for x in d["osds"])' 2>/dev/null; then break; fi
+  if ceph osd dump -f json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); assert len(d["osds"]) == int(sys.argv[1]) and all(x["up"] and x["in"] for x in d["osds"])' "$osds" 2>/dev/null; then break; fi
   [ "$attempt" -ne 60 ]
   sleep 1
 done
-ceph osd pool delete rbd rbd --yes-i-really-really-mean-it
-ceph osd pool create rbd 4
-rbd pool init rbd
-ceph osd map rbd SOMETHING -f json
-printf 'ABCDEF\n' > "$live_dir/payload"
-timeout 60 rados --pool rbd put SOMETHING "$live_dir/payload"
-echo 'LIVE PREFLIGHT PASS: one MON, three OSDs, original SOMETHING write'
+if test "$create_rbd" = 1; then
+  ceph osd pool delete rbd rbd --yes-i-really-really-mean-it
+  ceph osd pool create rbd 4
+  rbd pool init rbd
+  ceph osd map rbd SOMETHING -f json
+  printf 'ABCDEF\n' > "$live_dir/payload"
+  timeout 60 rados --pool rbd put SOMETHING "$live_dir/payload"
+fi
+echo "LIVE PREFLIGHT PASS: one MON, $osds OSDs"
 sleep "${CRUSH_PREFLIGHT_HOLD:-0}"
