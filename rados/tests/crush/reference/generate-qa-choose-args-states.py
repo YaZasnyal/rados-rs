@@ -10,7 +10,6 @@ def single(name, base, alt, index=default, ids="", positions=None, root_ids=""):
     root_sets = "\n".join(f"  [ {sum(row)}.00000 ]" for row in positions)
     devices = "\n".join(f"device {i} osd.{i}" for i in range(len(base)))
     items = "\n".join(f" item osd.{i} weight {weight}.00000" for i, weight in enumerate(base))
-    root.write_text if False else None
     (root / f"qa-{name}.crush").write_text(f'''# Local source-shaped state from crush-choose-args.sh::{name}.
 # Published canonical/compat HOST totals: {sum(base)}/{sum(alt)}.
 # begin crush map

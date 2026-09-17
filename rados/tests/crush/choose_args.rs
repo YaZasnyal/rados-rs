@@ -116,18 +116,24 @@ fn choose_args_cli_fixture_keeps_empty_index_and_signed_hash_ids() {
         assert!(map.choose_args.contains_key(&1));
         assert!(map.choose_args[&1].iter().all(Option::is_none));
         assert!(!map.choose_args.contains_key(&0));
-        for bucket in [-1, -2, -3, -4, -5] {
-            let bucket = map.get_bucket(bucket).unwrap();
+        for (id, bucket_type, weight, items, item_weights) in [
+            (-1, 1, 1, vec![0], vec![1 << 16]),
+            (-2, 1, 1, vec![1], vec![1 << 16]),
+            (-3, 2, 3, vec![-1, -2, -5], vec![1 << 16, 1 << 16, 1 << 16]),
+            (-4, 3, 4, vec![-3], vec![4 << 16]),
+            (-5, 1, 1, vec![2], vec![1 << 16]),
+        ] {
+            let bucket = map.get_bucket(id).unwrap();
             assert_eq!(bucket.alg, BucketAlgorithm::Straw2);
             assert_eq!(bucket.hash, 0);
+            assert_eq!(bucket.bucket_type, bucket_type);
+            assert_eq!(bucket.weight, weight << 16);
+            assert_eq!(bucket.size, items.len() as u32);
+            assert_eq!(bucket.items, items);
+            assert!(
+                matches!(&bucket.data, BucketData::Straw2 { item_weights: actual } if actual == &item_weights)
+            );
         }
-        assert_eq!(map.get_bucket(-1).unwrap().items, vec![0]);
-        assert_eq!(map.get_bucket(-2).unwrap().items, vec![1]);
-        assert_eq!(map.get_bucket(-3).unwrap().items, vec![-1, -2, -5]);
-        assert_eq!(map.get_bucket(-4).unwrap().items, vec![-3]);
-        assert_eq!(map.get_bucket(-5).unwrap().items, vec![2]);
-        assert_eq!(map.get_bucket(-3).unwrap().weight, 3 << 16);
-        assert_eq!(map.get_bucket(-4).unwrap().weight, 4 << 16);
 
         let arg2 = map.choose_args[&2][2].as_ref().unwrap();
         assert!(arg2.weight_set.is_empty());
@@ -364,6 +370,32 @@ fn qa_choose_args_states_match_pinned_c_placement_vectors() {
     ];
     for (name, bytes, index) in maps {
         let map = decode_fixture(bytes);
+        if matches!(name, "update-pre" | "update-remove") {
+            let args = &map.choose_args[&0];
+            assert_eq!(
+                args[0].as_ref().unwrap().weight_set,
+                vec![vec![2 << 16], vec![2 << 16]]
+            );
+            assert_eq!(args[0].as_ref().unwrap().ids, vec![-10]);
+            assert_eq!(
+                args[1].as_ref().unwrap().weight_set,
+                vec![vec![2 << 16], vec![2 << 16]]
+            );
+            assert_eq!(args[1].as_ref().unwrap().ids, vec![-20]);
+        }
+        if matches!(name, "no-update-pre" | "no-update-remove") {
+            let args = &map.choose_args[&0];
+            assert_eq!(
+                args[0].as_ref().unwrap().weight_set,
+                vec![vec![2 << 16], vec![1 << 16]]
+            );
+            assert_eq!(args[0].as_ref().unwrap().ids, vec![-10]);
+            assert_eq!(
+                args[1].as_ref().unwrap().weight_set,
+                vec![vec![2 << 16], vec![1 << 16]]
+            );
+            assert_eq!(args[1].as_ref().unwrap().ids, vec![-20]);
+        }
         for line in include_str!("reference/qa-choose-args-vectors.txt")
             .lines()
             .filter(|line| !line.starts_with('#'))
