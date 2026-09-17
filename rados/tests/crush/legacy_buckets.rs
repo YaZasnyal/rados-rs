@@ -50,9 +50,9 @@ fn weights(case: &str, devices: usize) -> Vec<u32> {
     weights
 }
 
-// Upstream: v17.2.7/src/test/cli/crushtool/add-item-in-tree.t::cmd-01..cmd-10
+// Upstream: v17.2.7/src/test/cli/crushtool/add-item-in-tree.t::locally assigned cmd-01..cmd-10
 // Source: https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/add-item-in-tree.t#L1
-// Upstream: v20.2.4/src/test/cli/crushtool/add-item-in-tree.t::cmd-01..cmd-10
+// Upstream: v20.2.4/src/test/cli/crushtool/add-item-in-tree.t::locally assigned cmd-01..cmd-10
 // Source: https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/add-item-in-tree.t#L1
 #[test]
 fn legacy_bucket_fixtures_decode_the_pinned_c_shapes() {
@@ -70,12 +70,37 @@ fn legacy_bucket_fixtures_decode_the_pinned_c_shapes() {
         ));
 
         let tree = decode(fixture(release, "tree"));
-        for id in [-1, -2] {
+        for (id, num_nodes, node_weights) in [
+            (-1, 2, &[0, 8 << 16][..]),
+            (
+                -2,
+                16,
+                &[
+                    0,
+                    1 << 16,
+                    2 << 16,
+                    1 << 16,
+                    4 << 16,
+                    1 << 16,
+                    2 << 16,
+                    1 << 16,
+                    8 << 16,
+                    1 << 16,
+                    2 << 16,
+                    1 << 16,
+                    4 << 16,
+                    1 << 16,
+                    2 << 16,
+                    1 << 16,
+                ][..],
+            ),
+        ] {
             let bucket = tree.get_bucket(id).unwrap();
             assert_eq!(bucket.alg, BucketAlgorithm::Tree);
             assert!(matches!(
                 &bucket.data,
-                BucketData::Tree { num_nodes, node_weights } if *num_nodes as usize == node_weights.len() && *num_nodes > bucket.size
+                BucketData::Tree { num_nodes: actual_nodes, node_weights: actual_weights }
+                    if *actual_nodes == num_nodes && actual_weights == node_weights
             ));
         }
         for rule in 0..3 {
