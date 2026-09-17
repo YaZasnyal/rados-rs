@@ -120,6 +120,48 @@ pub struct CrushChooseArg {
     pub ids: Vec<i32>,
 }
 
+/// Opt-in counters for the retry attempts observed during CRUSH placement.
+#[derive(Debug, Clone)]
+pub struct ChooseProfile {
+    bins: Option<Vec<u32>>,
+    visible_len: usize,
+}
+
+impl ChooseProfile {
+    fn new(choose_total_tries: u32) -> Self {
+        let visible_len = choose_total_tries as usize;
+        Self {
+            bins: Some(vec![0; visible_len + 1]),
+            visible_len,
+        }
+    }
+
+    /// Discard earlier observations and start a new profile batch.
+    pub fn start_choose_profile(&mut self, choose_total_tries: u32) {
+        *self = Self::new(choose_total_tries);
+    }
+
+    /// Return the bins visible through Ceph's `get_choose_profile` API.
+    pub fn get_choose_profile(&self) -> Option<&[u32]> {
+        self.bins.as_deref().map(|bins| &bins[..self.visible_len])
+    }
+
+    /// Stop profiling and discard its accumulated observations.
+    pub fn stop_choose_profile(&mut self) {
+        self.bins = None;
+    }
+
+    pub(crate) fn record(&mut self, tries: u32) {
+        if let Some(bin) = self
+            .bins
+            .as_deref_mut()
+            .and_then(|bins| bins.get_mut(tries as usize))
+        {
+            *bin += 1;
+        }
+    }
+}
+
 /// Main CRUSH map structure
 #[derive(Debug, Clone)]
 pub struct CrushMap {
@@ -180,6 +222,11 @@ impl CrushMap {
             class_bucket: HashMap::new(),
             choose_args: HashMap::new(),
         }
+    }
+
+    /// Start an opt-in retry profile batch for a caller-defined mapper batch.
+    pub fn start_choose_profile(&self) -> ChooseProfile {
+        ChooseProfile::new(self.choose_total_tries)
     }
 
     /// Get a bucket by ID

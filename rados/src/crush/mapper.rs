@@ -4,7 +4,7 @@
 use crate::crush::bucket::{bucket_choose_with_arg, bucket_perm_choose};
 use crate::crush::error::{CrushError, Result};
 use crate::crush::hash::crush_hash32_2;
-use crate::crush::types::{CrushChooseArg, CrushMap, RuleOp};
+use crate::crush::types::{ChooseProfile, CrushChooseArg, CrushMap, RuleOp};
 use crate::denc::constants::crush::{FIXED_POINT_MASK, FIXED_POINT_ONE};
 
 /// Sentinel value for "no item selected" in INDEP mode
@@ -95,6 +95,28 @@ pub fn crush_do_rule(
     crush_do_rule_with_choose_args(map, rule_id, x, result, result_max, weights, -1)
 }
 
+/// Execute a CRUSH rule while collecting retry observations in `profile`.
+pub fn crush_do_rule_with_choose_profile(
+    map: &CrushMap,
+    rule_id: u32,
+    x: u32,
+    result: &mut Vec<i32>,
+    result_max: usize,
+    weights: &[u32],
+    profile: &mut ChooseProfile,
+) -> Result<()> {
+    crush_do_rule_impl(
+        map,
+        rule_id,
+        x,
+        result,
+        result_max,
+        weights,
+        -1,
+        Some(profile),
+    )
+}
+
 /// Execute a CRUSH rule using a pool's choose-argument index.
 pub fn crush_do_rule_with_choose_args(
     map: &CrushMap,
@@ -104,6 +126,29 @@ pub fn crush_do_rule_with_choose_args(
     result_max: usize,
     weights: &[u32],
     choose_args_index: i64,
+) -> Result<()> {
+    crush_do_rule_impl(
+        map,
+        rule_id,
+        x,
+        result,
+        result_max,
+        weights,
+        choose_args_index,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn crush_do_rule_impl(
+    map: &CrushMap,
+    rule_id: u32,
+    x: u32,
+    result: &mut Vec<i32>,
+    result_max: usize,
+    weights: &[u32],
+    choose_args_index: i64,
+    mut profile: Option<&mut ChooseProfile>,
 ) -> Result<()> {
     let rule = map.get_rule(rule_id)?;
     let choose_args = map
@@ -178,6 +223,7 @@ pub fn crush_do_rule_with_choose_args(
                         recurse_to_leaf.then_some(&mut leaves[..remaining]),
                         0,
                         choose_args,
+                        profile.as_deref_mut(),
                     )?;
                     let selected = if recurse_to_leaf { &leaves } else { &domains };
                     scratch.extend_from_slice(&selected[..count]);
@@ -220,6 +266,7 @@ pub fn crush_do_rule_with_choose_args(
                         recurse_to_leaf.then_some(&mut leaves[..out_size]),
                         0, // top-level call: parent_r = 0
                         choose_args,
+                        profile.as_deref_mut(),
                     )?;
                     let selected = if recurse_to_leaf { &leaves } else { &domains };
                     scratch.extend_from_slice(&selected[..out_size]);
@@ -292,6 +339,7 @@ fn crush_choose_firstn(
     mut leaves: Option<&mut [i32]>,
     parent_r: u32,
     choose_args: Option<&[Option<CrushChooseArg>]>,
+    mut profile: Option<&mut ChooseProfile>,
 ) -> Result<usize> {
     let _span = tracing::debug_span!(
         "crush_choose_firstn",
@@ -431,6 +479,7 @@ fn crush_choose_firstn(
                             None,
                             sub_r,
                             choose_args,
+                            profile.as_deref_mut(),
                         )?;
                         reject = end == outpos;
                         if reject {
@@ -457,6 +506,9 @@ fn crush_choose_firstn(
                     );
                     out[outpos] = item;
                     outpos += 1;
+                    if let Some(profile) = profile.as_deref_mut() {
+                        profile.record(total_failures);
+                    }
                     continue 'replicas;
                 }
             } else {
@@ -527,6 +579,7 @@ fn crush_choose_indep(
     mut leaves: Option<&mut [i32]>,
     parent_r: i32,
     choose_args: Option<&[Option<CrushChooseArg>]>,
+    mut profile: Option<&mut ChooseProfile>,
 ) -> Result<()> {
     tracing::debug!(
         "crush_choose_indep: bucket_id={}, numrep={}, item_type={}, recurse_to_leaf={}",
@@ -553,10 +606,8 @@ fn crush_choose_indep(
         }
     }
 
-    for ftotal in 0..tries {
-        if left == 0 {
-            break;
-        }
+    let mut ftotal = 0;
+    while ftotal < tries && left > 0 {
         for rep in outpos..endpos {
             if out[rep] != CRUSH_ITEM_UNDEF {
                 continue;
@@ -653,6 +704,7 @@ fn crush_choose_indep(
                         None,
                         r as i32,
                         choose_args,
+                        profile.as_deref_mut(),
                     )?;
                     if leaf_out[rep] == CRUSH_ITEM_NONE {
                         tracing::debug!("Failed to find leaf in bucket {}", candidate);
@@ -680,6 +732,7 @@ fn crush_choose_indep(
                 break;
             }
         }
+        ftotal += 1;
     }
 
     for rep in outpos..endpos {
@@ -691,6 +744,10 @@ fn crush_choose_indep(
         {
             leaves[rep] = CRUSH_ITEM_NONE;
         }
+    }
+
+    if let Some(profile) = profile {
+        profile.record(ftotal);
     }
 
     Ok(())
@@ -1169,7 +1226,7 @@ mod tests {
         let mut out = vec![CRUSH_ITEM_NONE; 2];
         let weights = vec![0x10000, 0x10000, 0x10000];
         let count = crush_choose_firstn(
-            &map, -1, 123, 2, 0, &mut out, 0, &weights, 50, 50, 0, 0, 0, 0, None, 0, None,
+            &map, -1, 123, 2, 0, &mut out, 0, &weights, 50, 50, 0, 0, 0, 0, None, 0, None, None,
         )
         .unwrap();
         out.truncate(count);
@@ -1203,7 +1260,7 @@ mod tests {
         let weights = vec![0x10000, 0x10000, 0x10000, 0x10000];
 
         let res = crush_choose_indep(
-            &map, -1, 123, 3, 3, 0, &mut out, 0, &weights, 50, 0, false, None, 0, None,
+            &map, -1, 123, 3, 3, 0, &mut out, 0, &weights, 50, 0, false, None, 0, None, None,
         );
 
         assert!(res.is_ok());
@@ -1247,11 +1304,11 @@ mod tests {
         let mut out1 = vec![CRUSH_ITEM_NONE; 3];
         let mut out2 = vec![CRUSH_ITEM_NONE; 3];
         crush_choose_indep(
-            &map, -1, 42, 3, 3, 0, &mut out1, 0, &weights, 50, 0, false, None, 0, None,
+            &map, -1, 42, 3, 3, 0, &mut out1, 0, &weights, 50, 0, false, None, 0, None, None,
         )
         .unwrap();
         crush_choose_indep(
-            &map, -1, 42, 3, 3, 0, &mut out2, 0, &weights, 50, 0, false, None, 0, None,
+            &map, -1, 42, 3, 3, 0, &mut out2, 0, &weights, 50, 0, false, None, 0, None, None,
         )
         .unwrap();
         assert_eq!(out1, out2, "same input should produce same output");
@@ -1298,6 +1355,7 @@ mod tests {
             false,
             None,
             0,
+            None,
             None,
         )
         .unwrap();

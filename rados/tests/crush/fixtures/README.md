@@ -30,7 +30,7 @@ so an early mapper failure cannot hide incomplete fixture data. See the
 failures, mapper corrections and passing results.
 
 The original text maps `bad-mappings.crushmap.txt`, `set-choose.crushmap.txt`
-and `test-map-firstn-indep.txt` are also compiled by each pinned crushtool.
+`test-map-firstn-indep.txt` and `show-choose-tries.txt` are also compiled by each pinned crushtool.
 Those generated binaries and their reproduction instructions live separately
 in [reference](../reference/README.md#compiled-cli-maps). Rust decodes both
 release variants and checks the original transcripts. The earlier
@@ -55,6 +55,8 @@ does not replace it.
 | `test-map-firstn-indep.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-firstn-indep.t) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-firstn-indep.t) | `15890b6666025c1735adb6add9c8263dfe9a20ccb436f74e7c7abd5dc8b58970` |
 | `bad-mappings.crushmap.txt` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/bad-mappings.crushmap.txt) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/bad-mappings.crushmap.txt) | `7769a2304e7a81b864deb9e10eb550b882e12cb3093467f6c612f3a949bcbeeb` |
 | `bad-mappings.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/bad-mappings.t) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/bad-mappings.t) | `1abb4d051849b501d5ab2ade6e869fc1e56105ac1e21a9b4421ec9bae463cfa4` |
+| `show-choose-tries.txt` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/show-choose-tries.txt) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/show-choose-tries.txt) | `d84f192d7352fd023a4ff8a8960c38dfbf95b0c260f48a6f4f6c0cd358fe884d` |
+| `show-choose-tries.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/show-choose-tries.t) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/show-choose-tries.t) | `93d3fb809a368f129dba43faa05ee7860ac4ae30949f263c24862d9c093bf51d` |
 | `test-map-a.crushmap` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-a.crushmap) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-a.crushmap) | `3eacd04c60fa0143e298c49f6609a5b405fc01fc668f80386da28a8ea40781ca` |
 | `test-map-big-1.crushmap` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-big-1.crushmap) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-big-1.crushmap) | `1c53e90b3756abebfad9ba9caa64186ab42af2e11cdb0ce5ef65efc264cb9ad3` |
 | `test-map-bobtail-tunables.t` | [Quincy](https://github.com/ceph/ceph/blob/b12291d110049b2f35e32e0de30d70e9a4c060d2/src/test/cli/crushtool/test-map-bobtail-tunables.t) / [Tentacle](https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/test/cli/crushtool/test-map-bobtail-tunables.t) | `49302596753ab66180af0c2e06761bd5e59763f01df60730a5b5e122bd8fbc86` |

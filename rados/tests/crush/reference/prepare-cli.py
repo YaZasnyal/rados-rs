@@ -23,6 +23,7 @@ cases = (
     ("bad-mappings", "bad-mappings.crushmap.txt", 2),
     ("test-map-firstn-indep", "test-map-firstn-indep.txt", 2),
     ("set-choose", "set-choose.crushmap.txt", 3),
+    ("show-choose-tries", "show-choose-tries.txt", 2),
 )
 generated = {}
 for release, version, revision, digest in releases:
@@ -44,11 +45,17 @@ for release, version, revision, digest in releases:
                                input=(fixtures / source_name).read_bytes())
         assert data[:4] == b"\x00\x00\x01\x00", (release, name, "CRUSH magic")
         checked = 0
+        variables = {}
         for block in (fixtures / (name + ".t")).read_text().split("  $ ")[1:]:
             command, output = block.split("\n", 1)
+            if "=" in command and " " not in command:
+                key, value = command.split("=", 1)
+                variables[key] = value
+                continue
             args = shlex.split(command)
             if args[0] != "crushtool" or "--test" not in args:
                 continue
+            args = [variables.get(arg[1:], arg) if arg.startswith("$") else arg for arg in args]
             # Only the input transport changes; every testing option is retained.
             args[args.index("-i") + 1] = "-"
             expected = []

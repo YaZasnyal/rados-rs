@@ -17,3 +17,6 @@ mod choose_args;
 
 #[path = "crush/hierarchy.rs"]
 mod hierarchy;
+
+#[path = "crush/profile.rs"]
+mod profile;

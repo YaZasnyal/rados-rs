@@ -390,3 +390,24 @@ the same names with `-green`, and the complete seven-test result is
 already-decoded names and passed with the combined hierarchy run. Remaining
 order-4 gates are device-class shadow mapping and choose-retry profiling;
 they are not covered by this query task.
+
+## Retry-profile observation — 2026-09-17
+
+Coverage: Ported. Readiness: Ready now. Verification: Passing. The unchanged
+`show-choose-tries.txt` and `.t` were verified byte-for-byte against Quincy
+`b12291d110049b2f35e32e0de30d70e9a4c060d2` and Tentacle
+`7f793731f1b39eb4f465e960113d2363c311b964`. The pinned offline tools replayed
+both full 50-bin command outputs and generated 378-byte Quincy
+`e3d9bf356fcaac6c07a23051cf93663497c4aa53e1a624b2d4e6e19148d76c2d`
+and 386-byte Tentacle
+`60facf6aaf3be5faa67507c881f5ffe26926f4b1fe6de3c6fd52c62f4d5f9454`
+maps.
+
+`profile.rs` checks both separate fresh command profiles, full visible length,
+batch accumulation, start/reset and stop. Its initial compiled behavioral RED
+was two failures with all 50 bins zero (`/private/tmp/task5-profile-api.log`); its
+focused GREEN is `/private/tmp/task5-green-focused.log`. The profile is a
+caller-owned opt-in object passed through the existing conventional mapper and
+both recursive paths. FIRSTN counts accepted replicas; INDEP counts once after
+each completed loop. Backing storage has the C-compatible extra terminal bin,
+while snapshots expose only `choose_total_tries` bins.

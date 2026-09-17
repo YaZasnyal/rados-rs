@@ -19,7 +19,7 @@ cargo test -p rados --test crush --offline
 
 ## Ported tests
 
-**69 tests pass, none ignored.** These establish the scenarios below, not
+**84 tests pass, none ignored.** These establish the scenarios below, not
 complete CRUSH or end-to-end client compatibility.
 
 | Family | Ceph coverage retained | Rust tests | Status |
@@ -33,6 +33,7 @@ complete CRUSH or end-to-end client compatibility.
 | Quincy INDEP, mapping-only type adaptation | `indep_toosmall`, `indep_basic`, `indep_out_alt`, `indep_out_contig`, `indep_out_progressive`: original domains, holes, uniqueness and progressive movement | [functional.rs](functional.rs) existing NORMAL tests | Coverage: Ported; Readiness: Ready now; Verification: Passing. Raw type 123 equals Erasure type 3 for all 508 ordered C vectors; decoding raw 123 remains unported. |
 | Legacy STRAW / STRAW2 weights, Quincy | `straw_zero` (10,000), `straw_same` (100,000), `straw2_reweight` (1,000,000) | [weights.rs](weights.rs) | Coverage: Ported; Readiness: Ready now; Verification: Passing. C-built STRAW lengths, output digests and unseeded C RNG realization are recorded in the reference runner. |
 | Insufficient mappings, both releases | `bad-mappings.t` rules 0/1, seed 1, ten replicas: exact FIRSTN short result and INDEP NONE slots | [golden.rs](golden.rs) `bad_mappings_compiled`; [functional.rs](functional.rs) `bad_mappings` | Passing with both compiled map encodings and the earlier direct setup; same two upstream cases |
+| Retry-profile observation, both releases | `show-choose-tries.t` rule 0 FIRSTN/count 2 and rule 1 INDEP/count 1: both full 50-bin profiles, distinct fresh commands | [profile.rs](profile.rs) | Passing with both compiled encodings; caller-owned batch profile accumulates, explicit start resets, and stop discards |
 | Additional mapper regressions | Eight local tests, including 12,600 vectors generated from pinned C mappers | [regressions.rs](regressions.rs) | Passing; additional coverage, not upstream test ports |
 
 The golden scenarios are `bobtail_tunables`, `firefly_tunables`,
@@ -97,12 +98,13 @@ fanout, rule retry overrides (positive, zero, negative and repeated values),
 and safe rejection of negative MSR fanout. The C oracle supplies expected
 values; negative fanout is a separate Rust validation contract.
 
-The seven mapping commands in `set-choose.t::cmd-02/cmd-03/cmd-04`,
-`test-map-firstn-indep.t::cmd-02/cmd-03` and `bad-mappings.t::cmd-02/cmd-03`
-(locally assigned command IDs) have Coverage: Ported for client decode and
-placement, Readiness: Ready now, Verification: Passing. Each test has pinned
-source links. Unmodified inputs/transcripts are in [fixtures](fixtures/README.md);
-six generated binaries and their commands, versions and hashes are in
+The nine mapping commands in `set-choose.t::cmd-02/cmd-03/cmd-04`,
+`test-map-firstn-indep.t::cmd-02/cmd-03`, `bad-mappings.t::cmd-02/cmd-03`,
+and `show-choose-tries.t::cmd-03/cmd-05` (locally assigned command IDs) have
+Coverage: Ported for client decode and placement, Readiness: Ready now,
+Verification: Passing. Each test has pinned source links. Unmodified
+inputs/transcripts are in [fixtures](fixtures/README.md); eight generated
+binaries and their commands, versions and hashes are in
 [reference](reference/README.md#compiled-cli-maps). Tentacle adds eight MSR
 tunable bytes; both binary variants are exercised, consuming all bytes.
 
@@ -114,13 +116,19 @@ the original duplicate rack1 entry and both mixed rules. Its transcript reports
 only bad mappings; successful calls are checked for length and absence of NONE,
 without inventing exact expected vectors for them.
 
-All five new Rust tests passed before production changes; none were needed.
-The preparation script independently reproduced every complete command output
-with both pinned tools. Native text compilation, temporary-file cleanup and
-console formatting remain outside the Rust client API (overall CLI Coverage:
-Partial; disposition review: Pending). No sample or mapping assertion is
-excluded. The original direct-assembly bad-mappings test and C-builder audit
-remain supplementary checks of the same two upstream scenarios.
+The new retry-profile tests recorded an initial behavioral failure with every
+visible bin zero, then passed after the counter plumbing. The preparation
+script independently reproduced every complete command output with both pinned
+tools. Profile collection is caller-owned: ordinary placement does not allocate
+or collect counter data. FIRSTN records only accepted replicas; INDEP records
+once after each retry loop, including recursive calls. Ceph stores 51 counters
+for `choose_total_tries=50` but exposes exactly 50, which the snapshot keeps.
+The earlier five new Rust tests passed before production changes; none were needed.
+Native text compilation, temporary-file cleanup and console formatting remain
+outside the Rust client API (overall CLI Coverage: Partial; disposition review:
+Pending). No sample or mapping assertion is excluded. The original
+direct-assembly bad-mappings test and C-builder audit remain supplementary
+checks of the same two upstream scenarios.
 
 ## Remaining work
 
@@ -132,7 +140,7 @@ This is the continuation order. “Not ported” does not mean unsupported;
 | 3 | Remaining Quincy mapper cases, STRAW zero/perturbed weights, STRAW2 reweight | Passing; five cases reuse their existing NORMAL ports after the raw-123/type-3 proof, and three assertion-bearing weight cases retain original setup/RNG outcome |
 | 3 | Zero/nonpositive rule retry settings | Passing; local C-reference cases retain positive, zero, negative and repeated override semantics for conventional FIRSTN and recursive chooseleaf |
 | 4 | Choose arguments: positional weights/IDs and legacy encoding fallback | Coverage: Ported; Readiness: Ready now; Verification: Passing — 2,100 pinned C vectors cover direct FIRSTN/INDEP, recursive CHOOSELEAF, chained steps, and Tentacle MSR FIRSTN/INDEP with unavailable-device retries. All 16 published QA transition states have decoded canonical/compat fields and 160 ordered C/Rust placement rows; update/no-update pre/remove retain both weight-set positions and IDs at real index 0 without default fallback. CLI indexes 1–6 retain all declared arguments and every bucket's type, size, canonical weights and items. Malformed source-byte mutations assert the bucket/weight/ID guards. Producer APIs remain outside this retained client-observation scope. |
-| 4 | Device-class shadow mapping, hierarchy/location queries, retry counters | Coverage: Partial; hierarchy/location queries are Ported, Ready now and Passing for both pins, including `location.t`'s unchanged large map. Device-class mapping and retry counters remain incomplete. |
+| 4 | Device-class shadow mapping, hierarchy/location queries, retry counters | Coverage: Partial; hierarchy/location queries and retry counters are Ported, Ready now and Passing for both pins, including `location.t`'s unchanged large map and `show-choose-tries.t`'s full profiles. Device-class mapping remains incomplete. |
 | 5 | OSDMap raw/up/acting sets, primary/affinity, EC positions and map transitions | Not ported as a complete reference suite; capture original OSDMap setup/deltas |
 | 5 | Original client I/O and pool scenarios on both releases | Not run; requires matching clusters |
 
