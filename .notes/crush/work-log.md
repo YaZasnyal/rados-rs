@@ -361,3 +361,32 @@ The original full-output digest check remains. `straw_zero`, `straw_same`, and
 assertions are identical between Quincy and Tentacle. Focused test logs retain
 the two pre-existing `pgmap_types.rs` dead-code warnings as accepted unrelated
 noise; no production warning suppression changed.
+
+## Hierarchy and location queries — 2026-09-17
+
+Coverage: Ported. Readiness: Ready now. Verification: Passing. Task 4 ports
+the matching Quincy and Tentacle `CrushWrapperTest.get_immediate_parent`,
+`check_item_loc`, `bucket_types`, and `distance` cases into
+`rados/tests/crush/hierarchy.rs`. Direct maps retain the source topology and
+state transitions without adding an editor. `CrushMap` now exposes parent,
+ordered location, common-ancestor distance, membership/16.16 item-weight, and
+type lookup/count queries. The only Rust-only adaptation is a cycle guard for
+malformed public or decoded graphs.
+
+`location.t` is fully retained with unchanged
+`fixtures/test-map-big-1.crushmap` (SHA256
+`1c53e90b3756abebfad9ba9caa64186ab42af2e11cdb0ce5ef65efc264cb9ad3`).
+ID 44 has an empty path, while 16 returns `ItemNotFound`; crushtool prints no
+path for either. IDs 167, 258, and 87 keep all ordered fields. Both pinned
+offline crushtool images produced byte-identical output in
+`/private/tmp/task4-location-{quincy,tentacle}.log`.
+
+Initial functional RED logs are `/private/tmp/task4-parent-red.log`,
+`task4-location-membership-red.log`, `task4-distance-red.log`, and
+`task4-large-location-red.log`; each compiled and failed only because the
+new query stub returned missing/no result. The corresponding GREEN logs are
+the same names with `-green`, and the complete seven-test result is
+`/private/tmp/task4-hierarchy-green.log`. Type lookup is a direct query over
+already-decoded names and passed with the combined hierarchy run. Remaining
+order-4 gates are device-class shadow mapping and choose-retry profiling;
+they are not covered by this query task.

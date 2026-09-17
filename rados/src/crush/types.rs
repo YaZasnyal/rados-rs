@@ -223,6 +223,135 @@ impl CrushMap {
     pub fn device_has_class(&self, device_id: i32, class_name: &str) -> bool {
         self.get_device_class(device_id) == Some(class_name)
     }
+
+    pub fn immediate_parent(&self, id: i32) -> crate::crush::Result<(String, String)> {
+        for bucket in self.buckets.iter().flatten() {
+            if self.is_shadow_bucket(bucket.id) || !bucket.items.contains(&id) {
+                continue;
+            }
+            let name = self
+                .names
+                .get(&bucket.id)
+                .ok_or(CrushError::InvalidHierarchy("parent bucket has no name"))?;
+            let bucket_type =
+                self.type_names
+                    .get(&bucket.bucket_type)
+                    .ok_or(CrushError::InvalidHierarchy(
+                        "parent bucket has no type name",
+                    ))?;
+            return Ok((bucket_type.clone(), name.clone()));
+        }
+        Err(CrushError::ItemNotFound(id))
+    }
+
+    pub fn location_ordered(&self, id: i32) -> crate::crush::Result<Vec<(String, String)>> {
+        if !self.names.contains_key(&id) {
+            return Err(CrushError::ItemNotFound(id));
+        }
+        let mut path = Vec::new();
+        let mut current = id;
+        let mut visited = std::collections::HashSet::from([id]);
+        loop {
+            let parent = match self.immediate_parent(current) {
+                Ok(parent) => parent,
+                Err(CrushError::ItemNotFound(_)) => break,
+                Err(error) => return Err(error),
+            };
+            let parent_id = self
+                .names
+                .iter()
+                .find_map(|(&parent_id, name)| (name == &parent.1).then_some(parent_id))
+                .ok_or(CrushError::InvalidHierarchy("parent name has no ID"))?;
+            if !visited.insert(parent_id) {
+                return Err(CrushError::InvalidHierarchy("cycle"));
+            }
+            path.push(parent);
+            current = parent_id;
+        }
+        Ok(path)
+    }
+
+    pub fn common_ancestor_distance(
+        &self,
+        id: i32,
+        locations: &[(String, String)],
+    ) -> crate::crush::Result<i32> {
+        let path = self.location_ordered(id)?;
+        self.type_names
+            .iter()
+            .filter_map(|(&distance, type_name)| {
+                path.iter()
+                    .find(|(candidate, _)| candidate == type_name)
+                    .and_then(|(_, value)| {
+                        locations
+                            .iter()
+                            .any(|(candidate, location)| {
+                                candidate == type_name && location == value
+                            })
+                            .then_some(distance)
+                    })
+            })
+            .min()
+            .ok_or(CrushError::NoCommonAncestor)
+    }
+
+    pub fn item_at_location_weight(&self, id: i32, location: &[(String, String)]) -> Option<u32> {
+        let mut types: Vec<_> = self.type_names.iter().collect();
+        types.sort_unstable_by_key(|(id, _)| *id);
+        for (&type_id, type_name) in types {
+            if type_id == 0 {
+                continue;
+            }
+            let Some((_, bucket_name)) = location
+                .iter()
+                .find(|(candidate, _)| candidate == type_name)
+            else {
+                continue;
+            };
+            let bucket_id = self.names.iter().find_map(|(&bucket_id, candidate)| {
+                (candidate == bucket_name).then_some(bucket_id)
+            })?;
+            let bucket = self.get_bucket(bucket_id).ok()?;
+            return bucket
+                .items
+                .iter()
+                .position(|&item| item == id)
+                .and_then(|index| bucket_item_weight(bucket, index));
+        }
+        None
+    }
+
+    pub fn type_count(&self) -> usize {
+        self.type_names.len()
+    }
+
+    pub fn type_id(&self, name: &str) -> Option<i32> {
+        self.type_names
+            .iter()
+            .find_map(|(&id, candidate)| (candidate == name).then_some(id))
+    }
+
+    pub fn type_name(&self, id: i32) -> Option<&str> {
+        self.type_names.get(&id).map(String::as_str)
+    }
+
+    fn is_shadow_bucket(&self, id: i32) -> bool {
+        self.names.get(&id).is_some_and(|name| {
+            !name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        })
+    }
+}
+
+fn bucket_item_weight(bucket: &CrushBucket, index: usize) -> Option<u32> {
+    match &bucket.data {
+        BucketData::Uniform { item_weight } => Some(*item_weight),
+        BucketData::List { item_weights, .. }
+        | BucketData::Straw { item_weights, .. }
+        | BucketData::Straw2 { item_weights } => item_weights.get(index).copied(),
+        BucketData::Tree { node_weights, .. } => node_weights.get((index + 1) * 2 - 1).copied(),
+    }
 }
 
 impl Default for CrushMap {

@@ -14,3 +14,6 @@ mod weights;
 
 #[path = "crush/choose_args.rs"]
 mod choose_args;
+
+#[path = "crush/hierarchy.rs"]
+mod hierarchy;
