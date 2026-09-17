@@ -3739,8 +3739,8 @@ mod tests {
         .collect();
         crush.names = [
             (-1, "default"),
-            (-2, "localrack"),
-            (-3, "localhost"),
+            (-2, "localhost"),
+            (-3, "localrack"),
             (0, "osd.0"),
             (1, "osd.1"),
             (2, "osd.2"),
@@ -3757,6 +3757,31 @@ mod tests {
         crush.max_buckets = 3;
         crush.max_devices = 6;
         crush
+    }
+
+    #[test]
+    fn six_osd_source_fixture_ids_names_and_types() {
+        let crush = six_osd_crush_map();
+        let triples: Vec<_> = [-1, -2, -3]
+            .into_iter()
+            .map(|id| {
+                (
+                    id,
+                    crush.names.get(&id).map(String::as_str),
+                    crush.buckets[(-id - 1) as usize]
+                        .as_ref()
+                        .map(|bucket| bucket.bucket_type),
+                )
+            })
+            .collect();
+        assert_eq!(
+            triples,
+            [
+                (-1, Some("default"), Some(11)),
+                (-2, Some("localhost"), Some(1)),
+                (-3, Some("localrack"), Some(3)),
+            ]
+        );
     }
 
     fn source_six_osd_map() -> OSDMap {
@@ -3966,20 +3991,40 @@ mod tests {
         (any, first, primary)
     }
 
-    fn placement_digest(map: &OSDMap, pool: u64) -> String {
-        let mut digest = Sha256::new();
-        for seed in 0..10_000 {
-            let placement = map.pg_to_placement(&PgId::new(pool, seed)).unwrap();
-            for osds in [&placement.up, &placement.acting] {
-                digest.update((osds.len() as u32).to_be_bytes());
-                for osd in osds {
-                    digest.update(osd.to_be_bytes());
-                }
+    fn update_placement_digest(digest: &mut Sha256, placement: &PgPlacement) {
+        for osds in [&placement.up, &placement.acting] {
+            digest.update((osds.len() as u32).to_be_bytes());
+            for osd in osds {
+                digest.update(osd.to_be_bytes());
             }
-            digest.update(placement.up_primary.to_be_bytes());
-            digest.update(placement.acting_primary.to_be_bytes());
         }
-        hex::encode(digest.finalize())
+        digest.update(placement.up_primary.to_be_bytes());
+        digest.update(placement.acting_primary.to_be_bytes());
+    }
+
+    fn placement_digests(map: &OSDMap, pool: u64) -> (String, String) {
+        let mut direct = Sha256::new();
+        let mut cached = Sha256::new();
+        for seed in 0..10_000 {
+            let pg = PgId::new(pool, seed);
+            let cache_key = (pg.pool, pg.seed);
+            assert!(!map.lock_acting_cache().unwrap().contains(&cache_key));
+            let miss = map.pg_to_placement(&pg).unwrap();
+            let inserted = map
+                .lock_acting_cache()
+                .unwrap()
+                .peek(&cache_key)
+                .cloned()
+                .expect("miss inserts placement cache entry");
+            let hit = map.pg_to_placement(&pg).unwrap();
+            assert_eq!(hit, inserted, "cache hit seed {seed}");
+            update_placement_digest(&mut direct, &miss);
+            update_placement_digest(&mut cached, &hit);
+        }
+        (
+            hex::encode(direct.finalize()),
+            hex::encode(cached.finalize()),
+        )
     }
 
     fn pinned_placement_digest(pool: u64, state: &str) -> String {
@@ -4002,32 +4047,36 @@ mod tests {
         values[0].to_owned()
     }
 
+    fn assert_placement_digests(map: &OSDMap, pool: u64, state: &str) {
+        let expected = pinned_placement_digest(pool, state);
+        let (miss, hit) = placement_digests(map, pool);
+        assert_eq!(
+            miss, expected,
+            "direct cache miss, pool {pool}, state {state}"
+        );
+        assert_eq!(
+            hit, expected,
+            "immediate cache hit, pool {pool}, state {state}"
+        );
+    }
+
     #[test]
     fn primary_affinity_matches_pinned_placement_digests() {
         let mut map = source_six_osd_map();
         for pool in [1, 2] {
-            assert_eq!(
-                placement_digest(&map, pool),
-                pinned_placement_digest(pool, "default")
-            );
+            assert_placement_digests(&map, pool, "default");
 
             let mut zero = OSDMapIncremental::new(Epoch::new(map.epoch.as_u32() + 1));
             zero.new_primary_affinity.insert(0, 0);
             zero.new_primary_affinity.insert(1, 0);
             zero.apply_to(&mut map).unwrap();
-            assert_eq!(
-                placement_digest(&map, pool),
-                pinned_placement_digest(pool, "zero")
-            );
+            assert_placement_digests(&map, pool, "zero");
 
             let mut half = OSDMapIncremental::new(Epoch::new(map.epoch.as_u32() + 1));
             half.new_primary_affinity.insert(0, 0x8000);
             half.new_primary_affinity.insert(1, 0);
             half.apply_to(&mut map).unwrap();
-            assert_eq!(
-                placement_digest(&map, pool),
-                pinned_placement_digest(pool, "half")
-            );
+            assert_placement_digests(&map, pool, "half");
 
             let mut restore = OSDMapIncremental::new(Epoch::new(map.epoch.as_u32() + 1));
             restore
