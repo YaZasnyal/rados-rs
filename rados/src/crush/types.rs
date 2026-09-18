@@ -157,7 +157,9 @@ impl ChooseProfile {
             .as_deref_mut()
             .and_then(|bins| bins.get_mut(tries as usize))
         {
-            *bin += 1;
+            // NOTE: Ceph's profiling bins are u32 counters and wrap on overflow.
+            // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L622-L623
+            *bin = bin.wrapping_add(1);
         }
     }
 }
@@ -420,5 +422,18 @@ fn bucket_item_weight(bucket: &CrushBucket, index: usize) -> Option<u32> {
 impl Default for CrushMap {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::ChooseProfile;
+
+    #[test]
+    fn retry_counter_wraps_like_ceph() {
+        let mut profile = ChooseProfile::new(1);
+        profile.bins.as_mut().unwrap()[0] = u32::MAX;
+        profile.record(0);
+        assert_eq!(profile.get_choose_profile(), Some([0].as_slice()));
     }
 }

@@ -25,7 +25,7 @@ fn calculate_numrep(step_arg: i32, result_max: usize) -> usize {
     } else if step_arg > 0 {
         step_arg as usize
     } else {
-        (result_max as i32 + step_arg).max(0) as usize
+        result_max.saturating_sub(step_arg.unsigned_abs() as usize)
     }
 }
 
@@ -41,7 +41,7 @@ fn get_item_type(map: &CrushMap, item: i32) -> Option<i32> {
 }
 
 /// Check if an OSD is "out" (failed, fully offloaded)
-fn is_out(weight: &[u32], item: i32, x: u32) -> bool {
+fn is_out(weight: &[u32], item: i32, x: i32) -> bool {
     if item < 0 || item as usize >= weight.len() {
         return true;
     }
@@ -60,7 +60,7 @@ fn is_out(weight: &[u32], item: i32, x: u32) -> bool {
 
     // Probabilistic: use hash to determine if item is in or out
     // This allows gradual weight changes
-    let hash = crush_hash32_2(x, item as u32);
+    let hash = crush_hash32_2(x as u32, item as u32);
     (hash & FIXED_POINT_MASK) >= w
 }
 
@@ -158,6 +158,14 @@ fn crush_do_rule_impl(
     choose_args_index: i64,
     mut profile: Option<&mut ChooseProfile>,
 ) -> Result<()> {
+    // NOTE: Ceph's public mapper takes signed 32-bit counts and input bits.
+    // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L2016-L2020
+    if result_max > i32::MAX as usize || weights.len() > i32::MAX as usize {
+        return Err(CrushError::InvalidRuleState(
+            "mapper count exceeds i32::MAX",
+        ));
+    }
+    let x = x as i32;
     let rule = map.get_rule(rule_id)?;
     let choose_args = map
         .choose_args
@@ -177,9 +185,9 @@ fn crush_do_rule_impl(
     let mut work: Vec<i32> = Vec::with_capacity(result_max);
     let mut scratch: Vec<i32> = Vec::with_capacity(result_max);
 
-    // C++ mapper.c: "the original choose_total_tries value was off by one
-    // (it counted 'retries' and not 'tries'). add one."
-    let mut choose_tries = map.choose_total_tries + 1;
+    // NOTE: Ceph adds one to this u32 retry count; overflow wraps before use.
+    // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L849-L853
+    let mut choose_tries = map.choose_total_tries.wrapping_add(1);
     let mut choose_leaf_tries = 0;
     let mut choose_local_tries = map.choose_local_tries;
     let mut choose_local_fallback_tries = map.choose_local_fallback_tries;
@@ -332,7 +340,7 @@ fn crush_do_rule_impl(
 fn crush_choose_firstn(
     map: &CrushMap,
     bucket_id: i32,
-    x: u32,
+    x: i32,
     numrep: usize,
     item_type: i32,
     out: &mut [i32],
@@ -345,7 +353,7 @@ fn crush_choose_firstn(
     vary_r: u32,
     stable: u32,
     mut leaves: Option<&mut [i32]>,
-    parent_r: u32,
+    parent_r: i32,
     choose_args: Option<&[Option<CrushChooseArg>]>,
     mut profile: Option<&mut ChooseProfile>,
 ) -> Result<usize> {
@@ -382,9 +390,9 @@ fn crush_choose_firstn(
         let mut local_failures = 0u32;
         loop {
             // Retries always change r. vary_r only controls the recursive seed.
-            let r = (rep as u32)
+            let r = (rep as i32)
                 .wrapping_add(parent_r)
-                .wrapping_add(total_failures);
+                .wrapping_add(total_failures as i32);
             let mut collide = false;
             if current_bucket.size != 0 {
                 let item = if local_fallback_tries > 0
@@ -459,7 +467,12 @@ fn crush_choose_firstn(
                         let sub_r = if vary_r == 0 {
                             0
                         } else {
-                            r.checked_shr(vary_r - 1).unwrap_or(0)
+                            // NOTE: Ceph shifts a signed int here (arithmetic shift).
+                            // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L548-L553
+                            r.checked_shr(vary_r - 1)
+                                .ok_or(CrushError::InvalidRuleState(
+                                    "chooseleaf_vary_r exceeds 32-bit shift range",
+                                ))?
                         };
                         tracing::trace!(
                             rep,
@@ -527,11 +540,13 @@ fn crush_choose_firstn(
                 );
             }
 
-            total_failures += 1;
-            local_failures += 1;
+            // NOTE: Failure counters and the fallback bound use u32 arithmetic in C.
+            // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L586-L598
+            total_failures = total_failures.wrapping_add(1);
+            local_failures = local_failures.wrapping_add(1);
             if (collide && local_failures <= local_tries)
                 || (local_fallback_tries > 0
-                    && local_failures <= current_bucket.size + local_fallback_tries)
+                    && local_failures <= current_bucket.size.wrapping_add(local_fallback_tries))
             {
                 // A local retry stays in the bucket where the collision occurred.
                 tracing::trace!(
@@ -574,7 +589,7 @@ fn crush_choose_firstn(
 fn crush_choose_indep(
     map: &CrushMap,
     bucket_id: i32,
-    x: u32,
+    x: i32,
     mut left: usize,
     numrep: usize,
     item_type: i32,
@@ -623,6 +638,10 @@ fn crush_choose_indep(
             let mut current_bucket = bucket;
 
             loop {
+                if current_bucket.size == 0 {
+                    // Keep this position unresolved and retry from the original bucket.
+                    break;
+                }
                 let retry_stride = if current_bucket.alg
                     == crate::crush::types::BucketAlgorithm::Uniform
                     && current_bucket.size % numrep as u32 == 0
@@ -631,9 +650,9 @@ fn crush_choose_indep(
                 } else {
                     numrep
                 };
-                let r = (rep as u32)
-                    .wrapping_add(parent_r as u32)
-                    .wrapping_add((retry_stride as u32).wrapping_mul(ftotal));
+                let r = (rep as i32)
+                    .wrapping_add(parent_r)
+                    .wrapping_add((retry_stride as u32).wrapping_mul(ftotal) as i32);
                 let candidate = bucket_choose_with_arg(
                     current_bucket,
                     x,
@@ -710,7 +729,7 @@ fn crush_choose_indep(
                         0,
                         false,
                         None,
-                        r as i32,
+                        r,
                         choose_args,
                         profile.as_deref_mut(),
                     )?;
@@ -764,7 +783,7 @@ fn crush_choose_indep(
 fn crush_msr_do_rule(
     map: &CrushMap,
     rule: &crate::crush::types::CrushRule,
-    x: u32,
+    x: i32,
     result: &mut Vec<i32>,
     result_max: usize,
     weights: &[u32],
@@ -793,7 +812,7 @@ fn crush_msr_do_rule(
     result.clear();
     result.resize(result_max, CRUSH_ITEM_NONE);
     let mut returned = 0;
-    let mut start_index = 0;
+    let mut start_index = 0usize;
 
     while step < rule.steps.len() {
         let take = &rule.steps[step];
@@ -826,9 +845,21 @@ fn crush_msr_do_rule(
                 .map_err(|_| CrushError::InvalidMsrFanout(choose.arg1))?;
             total_children = total_children
                 .checked_mul(if fanout == 0 { result_max } else { fanout })
-                .unwrap_or(0);
+                .filter(|&count| count <= u32::MAX as usize)
+                .ok_or(CrushError::InvalidRuleState(
+                    "MSR fanout product exceeds u32::MAX",
+                ))?;
         }
-        let end_index = (start_index + total_children).min(result_max);
+        // NOTE: Ceph stores MSR fanout products and indices in unsigned int.
+        // Reject overflow instead of widening it into a different traversal.
+        // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L1139-L1212
+        let end_index = start_index
+            .checked_add(total_children)
+            .filter(|&end| end <= u32::MAX as usize)
+            .ok_or(CrushError::InvalidRuleState(
+                "MSR end index exceeds u32::MAX",
+            ))?
+            .min(result_max);
 
         if take.arg1 >= 0 {
             if first_choose != emit {
@@ -910,7 +941,7 @@ fn emit_msr_result(
 #[allow(clippy::too_many_arguments)]
 fn descend_msr(
     map: &CrushMap,
-    x: u32,
+    x: i32,
     result_max: usize,
     mut bucket_id: i32,
     item_type: i32,
@@ -926,8 +957,15 @@ fn descend_msr(
             .wrapping_add(index as u32)
             .wrapping_shl(16)
             .wrapping_add(local_attempt);
-        let candidate =
-            bucket_choose_with_arg(bucket, x, retry, choose_arg(choose_args, bucket.id), index);
+        // NOTE: Ceph computes an unsigned retry value, then passes it to an int.
+        // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L1249-L1268
+        let candidate = bucket_choose_with_arg(
+            bucket,
+            x,
+            retry as i32,
+            choose_arg(choose_args, bucket.id),
+            index,
+        );
         tracing::trace!(
             bucket_id,
             candidate,
@@ -980,7 +1018,7 @@ fn push_msr_candidate(selected: &mut [i32], candidate: i32) -> Result<bool> {
 fn choose_msr(
     map: &CrushMap,
     rule: &crate::crush::types::CrushRule,
-    x: u32,
+    x: i32,
     result_max: usize,
     weights: &[u32],
     collision_tries: u32,
@@ -1015,7 +1053,8 @@ fn choose_msr(
     let stride_length = total_descendants / num_strides;
     let workspace_index = current_step - workspace_start;
     let leaf_index = end_step - workspace_start - 1;
-    let mut undo = vec![CRUSH_ITEM_UNDEF; num_strides];
+    // Only strides intersecting the requested output can acquire undo entries.
+    let mut undo = vec![CRUSH_ITEM_UNDEF; (end_index - start_index).div_ceil(stride_length)];
     let mut mapped = 0;
 
     for (stride, stride_start) in (start_index..end_index).step_by(stride_length).enumerate() {
@@ -1323,6 +1362,72 @@ mod tests {
     }
 
     #[test]
+    fn indep_retries_empty_intermediate_bucket() {
+        let mut map = CrushMap::new();
+        map.max_devices = 2;
+        map.max_buckets = 6;
+        map.buckets = [
+            (-1, 3, vec![-2, -3, -4]),
+            (-2, 2, vec![]),
+            (-3, 2, vec![-5]),
+            (-4, 2, vec![-6]),
+            (-5, 1, vec![0]),
+            (-6, 1, vec![1]),
+        ]
+        .into_iter()
+        .map(|(id, bucket_type, items)| {
+            Some(CrushBucket {
+                id,
+                bucket_type,
+                alg: BucketAlgorithm::Uniform,
+                hash: 0,
+                weight: items.len() as u32 * 0x10000,
+                size: items.len() as u32,
+                items,
+                data: BucketData::Uniform {
+                    item_weight: 0x10000,
+                },
+            })
+        })
+        .collect();
+
+        for (op, expected) in [(RuleOp::ChooseLeafIndep, 0), (RuleOp::ChooseIndep, -5)] {
+            map.rules = vec![Some(CrushRule {
+                rule_id: 0,
+                rule_type: crate::crush::types::RuleType::Erasure,
+                steps: vec![
+                    CrushRuleStep {
+                        op: RuleOp::Take,
+                        arg1: -1,
+                        arg2: 0,
+                    },
+                    CrushRuleStep {
+                        op,
+                        arg1: 1,
+                        arg2: 1,
+                    },
+                    CrushRuleStep {
+                        op: RuleOp::Emit,
+                        arg1: 0,
+                        arg2: 0,
+                    },
+                ],
+            })];
+
+            // x=1 descends into empty rack -2 on its first attempt.
+            let mut result = Vec::new();
+            map.choose_total_tries = 0;
+            crush_do_rule(&map, 0, 1, &mut result, 1, &[0x10000; 2]).unwrap();
+            assert_eq!(result, [CRUSH_ITEM_NONE]);
+
+            // Ceph retries from the root and selects host -5 / osd.0.
+            map.choose_total_tries = 50;
+            crush_do_rule(&map, 0, 1, &mut result, 1, &[0x10000; 2]).unwrap();
+            assert_eq!(result, [expected]);
+        }
+    }
+
+    #[test]
     fn test_crush_choose_indep_with_out_device() {
         // When a device is "out", INDEP should put CRUSH_ITEM_NONE in that
         // position rather than shifting other items
@@ -1514,3 +1619,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "tests/mapper_types.rs"]
+mod type_tests;

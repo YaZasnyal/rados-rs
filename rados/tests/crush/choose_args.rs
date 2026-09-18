@@ -279,7 +279,9 @@ fn decoder_rejects_text_and_truncated_choose_arg_data() {
     assert_eq!(&invalid_weight[weight_len..weight_len + 4], &[1, 0, 0, 0]);
     invalid_weight[weight_len] = 0;
     let error = CrushMap::decode(&mut Bytes::from(invalid_weight)).unwrap_err();
-    assert!(error.to_string().contains("weight length"));
+    // The zero-length weight set is valid and normalized. Its old weight
+    // remains on the wire and is now read as a malformed ID count.
+    assert!(error.to_string().contains("ID length"));
 
     let mut invalid_ids = compat.to_vec();
     let ids_len = invalid_ids.len() - 4;

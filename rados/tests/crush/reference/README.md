@@ -412,3 +412,28 @@ with tempfile.TemporaryDirectory() as directory:
     (reference / 'mapper-retries.txt').write_bytes(
         b''.join(outputs['tentacle'][case] for case in range(11, 25)))
 ```
+
+## Integer boundaries
+
+`bucket-types.c` and `mapper-types.c` include unmodified `mapper.c` to call its
+static helpers. The Rust regressions in `bucket.rs` and `tests/mapper_types.rs`
+retain their outputs. Both pinned releases agree on the high-bit x/r vectors,
+all 65,536 `crush_ln` inputs (word-FNV digest `655ae82589f114e5`), signed STRAW2
+division, arithmetic FIRSTN shifts, and wrapped retry/fallback limits.
+
+Reproduce from the repository root with a Ceph checkout at `../ceph`:
+
+```sh
+for pin in b12291d110049b2f35e32e0de30d70e9a4c060d2 7f793731f1b39eb4f465e960113d2363c311b964; do
+    type_src=$(mktemp -d)
+    git -C ../ceph archive "$pin" src/crush src/include/int_types.h | tar -x -C "$type_src"
+    touch "$type_src/src/acconfig.h"
+    for probe in bucket-types mapper-types; do
+        cc -I"$type_src/src" -I"$type_src/src/crush" "rados/tests/crush/reference/$probe.c" "$type_src/src/crush/hash.c" -o "$type_src/$probe"
+        "$type_src/$probe"
+    done
+done
+```
+
+The probes construct local boundary scenarios; they are not upstream test ports.
+Cargo tests use the frozen outputs and require neither C compiler nor Ceph source.

@@ -1,5 +1,8 @@
 // Bucket selection algorithms for CRUSH
-// Reference: ~/dev/ceph/src/crush/mapper.c
+// NOTE: Ceph bucket helpers take signed int x/r; hash inputs are u32.
+// Casts at those boundaries preserve all 32 bits, including negative IDs.
+// https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L54-L390
+// https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/hash.h#L16-L20
 
 use crate::crush::hash::{crush_hash32_3, crush_hash32_4};
 use crate::crush::mapper::CRUSH_ITEM_NONE;
@@ -8,14 +11,14 @@ use crate::denc::constants::crush::{FIXED_POINT_MASK, LN_LOOKUP_OFFSET};
 
 /// Select an item from a bucket using the appropriate algorithm
 pub fn bucket_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
-    bucket_choose_with_arg(bucket, x, r, None, 0)
+    bucket_choose_with_arg(bucket, x as i32, r as i32, None, 0)
 }
 
 /// Select an item, applying the optional Ceph choose argument for STRAW2.
 pub(crate) fn bucket_choose_with_arg(
     bucket: &CrushBucket,
-    x: u32,
-    r: u32,
+    x: i32,
+    r: i32,
     arg: Option<&CrushChooseArg>,
     position: usize,
 ) -> i32 {
@@ -33,7 +36,8 @@ pub(crate) fn bucket_choose_with_arg(
 
 /// Compute 2^44*log2(input+1) using lookup tables
 /// This is the correct implementation matching Ceph's crush_ln
-/// Reference: ~/dev/ceph/src/crush/mapper.c lines 246-288
+/// Input is the low 16 bits of the hash, as in Ceph's STRAW2 draw.
+/// https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L229-L274
 fn crush_ln(xin: u32) -> u64 {
     use crate::crush::crush_ln_table::{LL_TBL, RH_LH_TBL};
 
@@ -55,8 +59,9 @@ fn crush_ln(xin: u32) -> u64 {
     // LH ~ 2^48 * log2(index1/256)
     let lh = RH_LH_TBL[index1 + 1 - 256] as u64;
 
-    // RH*x ~ 2^48 * (2^15 + xf), xf<2^8
-    let mut xl64 = (x as u64).wrapping_mul(rh);
+    // NOTE: C promotes (__s64)x to u64 for multiplication by unsigned RH.
+    // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L256-L258
+    let mut xl64 = u64::from(x).wrapping_mul(rh);
     xl64 >>= 48;
 
     let mut result = iexpon as u64;
@@ -75,20 +80,26 @@ fn crush_ln(xin: u32) -> u64 {
 
 /// Generate exponential distribution for Straw2
 /// Uses inversion method: -ln(U) / lambda where U is uniform random
-fn generate_exponential_distribution(x: u32, y: i32, z: u32, weight: u32) -> i64 {
-    let mut u = crush_hash32_3(x, y as u32, z);
+fn generate_exponential_distribution(x: i32, y: i32, z: i32, weight: i32) -> i64 {
+    // NOTE: Ceph's signed x/y/z are passed to unsigned hash inputs unchanged in bits.
+    // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/hash.h#L18
+    let mut u = crush_hash32_3(x as u32, y as u32, z as u32);
     u &= FIXED_POINT_MASK;
 
-    // Natural log lookup maps [0,0xffff] to [0, 0xffffffffffff]
-    // corresponding to real numbers [-11.090355, 0]
+    // NOTE: C subtracts in u64 and assigns to s64; the lookup is at most 2^48,
+    // so signed subtraction here preserves the resulting negative value.
+    // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L331
     let ln = crush_ln(u) as i64 - LN_LOOKUP_OFFSET;
 
-    // Divide by 16.16 fixed-point weight
-    // ln is negative, so larger weight means larger (less negative) draw
+    // NOTE: Ceph stores weights as u32 but takes an int here; the caller
+    // preserves its sign conversion. Unsigned division would change placement.
+    // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L315-L353
+    // Widening i32 to i64 is lossless. With ln in [-2^48, 0] and zero handled below,
+    // neither division by zero nor i64::MIN / -1 is possible.
     if weight == 0 {
         i64::MIN
     } else {
-        ln / weight as i64
+        ln / i64::from(weight)
     }
 }
 
@@ -97,8 +108,8 @@ fn generate_exponential_distribution(x: u32, y: i32, z: u32, weight: u32) -> i64
 /// Item with longest straw (highest draw value) wins
 fn bucket_straw2_choose(
     bucket: &CrushBucket,
-    x: u32,
-    r: u32,
+    x: i32,
+    r: i32,
     arg: Option<&CrushChooseArg>,
     position: usize,
 ) -> i32 {
@@ -130,7 +141,7 @@ fn bucket_straw2_choose(
 
     for (i, &weight) in weights.iter().enumerate().take(bucket.size as usize) {
         let draw = if weight > 0 {
-            generate_exponential_distribution(x, ids[i], r, weight)
+            generate_exponential_distribution(x, ids[i], r, weight as i32)
         } else {
             i64::MIN
         };
@@ -165,13 +176,15 @@ fn bucket_straw2_choose(
 
 /// Ceph's permutation selection for uniform buckets and FIRSTN fallback.
 /// Reference: src/crush/mapper.c::bucket_perm_choose, v17.2.7 and v20.2.4.
-pub(crate) fn bucket_perm_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
+pub(crate) fn bucket_perm_choose(bucket: &CrushBucket, x: i32, r: i32) -> i32 {
     if bucket.size == 0 {
         return CRUSH_ITEM_NONE;
     }
-    let position = r % bucket.size;
+    // NOTE: C promotes signed r to unsigned because bucket->size is u32.
+    // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L58
+    let position = r as u32 % bucket.size;
     if position == 0 {
-        let index = crush_hash32_3(x, bucket.id as u32, 0) % bucket.size;
+        let index = crush_hash32_3(x as u32, bucket.id as u32, 0) % bucket.size;
         return bucket.items[index as usize];
     }
 
@@ -179,7 +192,7 @@ pub(crate) fn bucket_perm_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
     let mut permutation: Vec<_> = (0..bucket.size).collect();
     for p in 0..=position {
         if p < bucket.size - 1 {
-            let offset = crush_hash32_3(x, bucket.id as u32, p) % (bucket.size - p);
+            let offset = crush_hash32_3(x as u32, bucket.id as u32, p) % (bucket.size - p);
             permutation.swap(p as usize, (p + offset) as usize);
         }
     }
@@ -188,7 +201,7 @@ pub(crate) fn bucket_perm_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
 
 /// List bucket selection (legacy)
 /// Items in a linked list with arbitrary weights
-fn bucket_list_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
+fn bucket_list_choose(bucket: &CrushBucket, x: i32, r: i32) -> i32 {
     let (item_weights, sum_weights) = match &bucket.data {
         BucketData::List {
             item_weights,
@@ -198,12 +211,17 @@ fn bucket_list_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
     };
 
     for i in (0..bucket.size as usize).rev() {
-        let mut w = crush_hash32_4(x, bucket.items[i] as u32, r, bucket.id as u32) as u64;
+        let mut w = u64::from(crush_hash32_4(
+            x as u32,
+            bucket.items[i] as u32,
+            r as u32,
+            bucket.id as u32,
+        ));
         w &= 0xffff;
-        w = w.wrapping_mul(sum_weights[i] as u64);
+        w = w.wrapping_mul(u64::from(sum_weights[i]));
         w >>= 16;
 
-        if w < item_weights[i] as u64 {
+        if w < u64::from(item_weights[i]) {
             return bucket.items[i];
         }
     }
@@ -219,7 +237,7 @@ fn bucket_list_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
 /// - `terminal(n)` = `n` is odd (leaf)
 /// - `left(n)` = `n - (1 << (height(n) - 1))`
 /// - `right(n)` = `n + (1 << (height(n) - 1))`
-fn bucket_tree_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
+fn bucket_tree_choose(bucket: &CrushBucket, x: i32, r: i32) -> i32 {
     let (num_nodes, node_weights) = match &bucket.data {
         BucketData::Tree {
             num_nodes,
@@ -241,15 +259,15 @@ fn bucket_tree_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
         }
         let offset = 1i32 << (h - 1);
 
-        let w = node_weights[n as usize] as u64;
-        let hash = crush_hash32_4(x, n as u32, r, bucket.id as u32) as u64;
-        let t = (hash * w) >> 32;
+        let w = node_weights[n as usize];
+        let hash = crush_hash32_4(x as u32, n as u32, r as u32, bucket.id as u32);
+        let t = (u64::from(hash) * u64::from(w)) >> 32;
 
         let l = n - offset;
         if l < 0 || l as usize >= node_weights.len() {
             break;
         }
-        if t < node_weights[l as usize] as u64 {
+        if t < u64::from(node_weights[l as usize]) {
             n = l;
         } else {
             n += offset; // right
@@ -266,7 +284,7 @@ fn bucket_tree_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
 
 /// Straw bucket selection (legacy, deprecated)
 /// Each item gets a straw with random length
-fn bucket_straw_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
+fn bucket_straw_choose(bucket: &CrushBucket, x: i32, r: i32) -> i32 {
     let straws = match &bucket.data {
         BucketData::Straw { straws, .. } => straws,
         _ => unreachable!("bucket_straw_choose called on non-Straw bucket"),
@@ -274,9 +292,9 @@ fn bucket_straw_choose(bucket: &CrushBucket, x: u32, r: u32) -> i32 {
 
     // Ceph keeps the first item on equal draws; max_by_key keeps the last.
     match (0..bucket.size as usize).rev().max_by_key(|&i| {
-        let mut draw = crush_hash32_3(x, bucket.items[i] as u32, r) as u64;
+        let mut draw = u64::from(crush_hash32_3(x as u32, bucket.items[i] as u32, r as u32));
         draw &= 0xffff;
-        draw.wrapping_mul(straws[i] as u64)
+        draw.wrapping_mul(u64::from(straws[i]))
     }) {
         Some(idx) => bucket.items[idx],
         None => CRUSH_ITEM_NONE,
@@ -313,6 +331,144 @@ mod tests {
 
         // Different input should potentially give different output
         let _item3 = bucket_straw2_choose(&bucket, 456, 0, None, 0);
+    }
+
+    #[test]
+    fn straw2_sign_extends_high_bit_weights() {
+        assert_eq!(generate_exponential_distribution(24, -2, 0, 0), i64::MIN);
+        // Signed draw values from the pinned Tentacle C implementation.
+        for (weight, expected) in [
+            (1, -15855628602878),
+            (i32::MAX, -7383),
+            (i32::MIN, 7383),
+            (-1, 15855628602878),
+        ] {
+            assert_eq!(
+                generate_exponential_distribution(i32::MIN, -2, -1, weight),
+                expected
+            );
+        }
+
+        let mut bucket = CrushBucket {
+            id: -1,
+            bucket_type: 2,
+            alg: BucketAlgorithm::Straw2,
+            hash: 0,
+            weight: 0xe0000000,
+            size: 2,
+            items: vec![-2, -3],
+            data: BucketData::Straw2 {
+                item_weights: vec![0xc0000000, 0x20000000],
+            },
+        };
+
+        // Quincy and Tentacle both select -2 for this review reproducer.
+        assert_eq!(bucket_choose(&bucket, 24, 0), -2);
+
+        bucket.data = BucketData::Straw2 {
+            item_weights: vec![0, 0x20000000],
+        };
+        assert_eq!(bucket_choose(&bucket, 24, 0), -3);
+        for weight in [0x80000000, 0xc0000000, 0xffffffff] {
+            let arg = CrushChooseArg {
+                weight_set: vec![vec![weight, 0x20000000]],
+                ids: vec![],
+            };
+            assert_eq!(bucket_choose_with_arg(&bucket, 24, 0, Some(&arg), 0), -2);
+        }
+    }
+
+    #[test]
+    fn bucket_helpers_match_ceph_for_high_bit_inputs() {
+        let weights = vec![0, 0x7fffffff, 0x80000000];
+        let algorithms = [
+            (
+                BucketAlgorithm::Uniform,
+                BucketData::Uniform {
+                    item_weight: u32::MAX,
+                },
+            ),
+            (
+                BucketAlgorithm::List,
+                BucketData::List {
+                    item_weights: weights.clone(),
+                    sum_weights: vec![0, 0x7fffffff, u32::MAX],
+                },
+            ),
+            (
+                BucketAlgorithm::Tree,
+                BucketData::Tree {
+                    num_nodes: 8,
+                    node_weights: vec![
+                        0,
+                        0,
+                        0x7fffffff,
+                        0x7fffffff,
+                        u32::MAX,
+                        0x80000000,
+                        0x80000000,
+                        0,
+                    ],
+                },
+            ),
+            (
+                BucketAlgorithm::Straw,
+                BucketData::Straw {
+                    item_weights: weights.clone(),
+                    straws: weights,
+                },
+            ),
+            (
+                BucketAlgorithm::Straw2,
+                BucketData::Straw2 {
+                    item_weights: vec![0x10000, 0x20000, 0x30000],
+                },
+            ),
+        ];
+        // Oracle: direct calls to the five pinned C bucket helpers, in the order above.
+        // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L54-L365
+        let cases = [
+            (0, 0, [-4, -4, -4, -4, -4]),
+            (0x7fffffff, 0x7fffffff, [-4, -3, -3, -3, -3]),
+            (0x80000000, 0, [-3, -3, -4, -4, -4]),
+            (0x80000000, 0x80000000, [-2, -4, -4, -4, -4]),
+            (0xffffffff, 1, [-2, -4, -4, -3, -4]),
+            (0xffffffff, 0xffffffff, [-4, -4, -3, -4, -4]),
+            (0xffffffff, 0xfffffffe, [-3, -3, -4, -4, -4]),
+            (1, 0x80000000, [-3, -3, -3, -4, -4]),
+        ];
+        for (index, (alg, data)) in algorithms.into_iter().enumerate() {
+            let bucket = CrushBucket {
+                id: -1,
+                bucket_type: 2,
+                alg,
+                hash: 0,
+                weight: u32::MAX,
+                size: 3,
+                items: vec![-2, -3, -4],
+                data,
+            };
+            for (x, r, expected) in cases {
+                assert_eq!(
+                    bucket_choose(&bucket, x, r),
+                    expected[index],
+                    "{alg:?}, x={x:#x}, r={r:#x}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn crush_ln_matches_ceph_for_all_hash_inputs() {
+        // The same fold over every 16-bit input of the pinned C crush_ln.
+        // https://github.com/ceph/ceph/blob/7f793731f1b39eb4f465e960113d2363c311b964/src/crush/mapper.c#L229-L274
+        let mut digest = 0xcbf29ce484222325u64;
+        for u in 0..=FIXED_POINT_MASK {
+            let ln = crush_ln(u);
+            assert!(ln <= LN_LOOKUP_OFFSET as u64);
+            digest = (digest ^ ln).wrapping_mul(0x100000001b3);
+        }
+        assert_eq!(digest, 0x655ae82589f114e5);
     }
 
     #[test]

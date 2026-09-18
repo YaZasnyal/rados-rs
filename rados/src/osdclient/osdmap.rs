@@ -973,15 +973,37 @@ impl PgPool {
     }
 
     /// Reverse `pgtemp_primaryfirst_vec` when the PG has a stored temp set.
-    pub fn pgtemp_undo_primaryfirst_vec(&self, has_pg_temp: bool, acting: &[i32]) -> Vec<i32> {
+    /// Returns an error if the optimized EC layout exceeds 128 shards,
+    /// has out-of-range nonprimary shards, or its temp length differs from size.
+    pub fn pgtemp_undo_primaryfirst_vec(
+        &self,
+        has_pg_temp: bool,
+        acting: &[i32],
+    ) -> Result<Vec<i32>, RadosError> {
         if !self.allows_ecoptimizations() || !has_pg_temp {
-            return acting.to_vec();
+            return Ok(acting.to_vec());
+        }
+        let size = usize::from(self.size);
+        if size > i8::MAX as usize + 1 || acting.len() != size {
+            return Err(RadosError::Protocol(format!(
+                "Invalid optimized EC pg_temp: pool size {size}, acting length {} (maximum 128 shards)",
+                acting.len()
+            )));
+        }
+        if self
+            .nonprimary_shards
+            .iter()
+            .any(|shard| shard.0 as usize >= size)
+        {
+            return Err(RadosError::Protocol(
+                "Optimized EC nonprimary shard is outside pool size".into(),
+            ));
         }
         let mut primary = 0;
-        let mut nonprimary = self.size as usize - self.nonprimary_shards.iter().count();
-        (0..self.size as i8)
+        let mut nonprimary = size - self.nonprimary_shards.iter().count();
+        Ok((0..size)
             .map(|shard| {
-                let index = if self.is_nonprimary_shard(ShardId::new(shard)) {
+                let index = if self.is_nonprimary_shard(ShardId::new(shard as i8)) {
                     let index = nonprimary;
                     nonprimary += 1;
                     index
@@ -992,7 +1014,7 @@ impl PgPool {
                 };
                 acting[index]
             })
-            .collect()
+            .collect())
     }
 
     /// Convert an original shard id to its primaryfirst position.
@@ -1795,16 +1817,12 @@ impl VersionedEncode for OSDMapClientSection {
             ..Default::default()
         };
 
-        let crush_bytes = Bytes::decode(buf, features)?;
+        let mut crush_bytes = Bytes::decode(buf, features)?;
         if !crush_bytes.is_empty() {
-            let mut crush_buf = crush_bytes.clone();
-            match CrushMap::decode(&mut crush_buf) {
-                Ok(crush_map) => section.crush = Some(crush_map),
-                Err(e) => {
-                    tracing::warn!("Failed to parse CRUSH map: {:?}", e);
-                    section.crush = None;
-                }
-            }
+            section.crush = Some(
+                CrushMap::decode(&mut crush_bytes)
+                    .map_err(|error| RadosError::Crush(Box::new(error)))?,
+            );
         }
 
         section.erasure_code_profiles = BTreeMap::decode(buf, features)?;
@@ -2209,11 +2227,7 @@ impl OSDMapIncremental {
         // returns -EINVAL otherwise; the epoch clause asserts).  An
         // out-of-order or wrong-cluster incremental landing in our base
         // would silently corrupt routing state, so we refuse instead.
-        if base.epoch.as_u32() == 0 {
-            // First-ever apply: adopt the inc's fsid (matches the
-            // `if (inc.epoch == 1) fsid = inc.fsid` branch).
-            base.fsid = self.fsid;
-        } else if self.fsid != base.fsid {
+        if base.epoch.as_u32() != 0 && self.fsid != base.fsid {
             return Err(RadosError::Protocol(format!(
                 "OSDMap incremental fsid {:?} does not match base {:?}; \
                  refusing to apply (wrong cluster?)",
@@ -2227,19 +2241,6 @@ impl OSDMapIncremental {
                 self.epoch.as_u32(),
                 base.epoch.as_u32()
             )));
-        }
-
-        // Invalidate placement caches on any OSDMap update.
-        // Clear acting_cache first: a thread that misses it and falls through
-        // to CRUSH must also miss crush_cache, forcing a full recompute from
-        // the new OSDMap state rather than using stale crush results.
-        {
-            let mut cache = base.lock_acting_cache()?;
-            cache.clear();
-        }
-        {
-            let mut cache = base.lock_crush_cache()?;
-            cache.clear();
         }
 
         // Full-map replacement.  C++ apply_incremental short-circuits
@@ -2258,6 +2259,24 @@ impl OSDMapIncremental {
                 self.epoch.as_u32(),
                 self.fullmap.len()
             )));
+        }
+
+        // Decode before changing the base: a bad topology must not leave
+        // new pool/state data paired with the previous CRUSH map.
+        let crush = if self.crush.is_empty() {
+            None
+        } else {
+            Some(
+                CrushMap::decode(&mut self.crush.clone())
+                    .map_err(|error| RadosError::Crush(Box::new(error)))?,
+            )
+        };
+
+        // Invalidate placement caches only after the update is validated.
+        base.lock_acting_cache()?.clear();
+        base.lock_crush_cache()?.clear();
+        if base.epoch.as_u32() == 0 {
+            base.fsid = self.fsid;
         }
 
         // Update epoch
@@ -2298,14 +2317,61 @@ impl OSDMapIncremental {
             base.pool_name.insert(*pool_id, name.clone());
         }
 
-        // new_up_client: a freshly UP OSD's client-facing address.
-        // C++ `OSDMap::apply_incremental` also sets the EXISTS|UP
-        // bits explicitly here and clears the STOP bit, so an OSD
-        // that was previously DESTROYED gets transitioned back to
-        // UP even if the paired `new_state` entry only XORs other
-        // bits.  Without this, the OSD's UP flag in our base could
-        // remain stale and `is_up()` would return false on the next
-        // routing decision.
+        for (osd, weight) in &self.new_weight {
+            let idx = *osd as usize;
+            if idx < base.osd_weight.len() {
+                base.osd_weight[idx] = *weight;
+            }
+        }
+
+        // Apply primary_affinity changes.  C++ stores this as a parallel
+        // vector indexed by osd_id; we mirror that shape.
+        for (osd, affinity) in &self.new_primary_affinity {
+            let idx = *osd as usize;
+            if idx >= base.osd_primary_affinity.len() {
+                base.osd_primary_affinity
+                    .resize(idx + 1, CEPH_OSD_DEFAULT_PRIMARY_AFFINITY);
+            }
+            base.osd_primary_affinity[idx] = *affinity;
+        }
+
+        // Apply state XORs before new_up_client, which forces EXISTS|UP.
+        // A zero delta toggles UP; toggling EXISTS off destroys the OSD.
+        for (osd, state) in &self.new_state {
+            let idx = *osd as usize;
+            if idx >= base.osd_state.len() {
+                continue;
+            }
+            let state = if *state == 0 { CEPH_OSD_UP } else { *state };
+            if base.osd_state[idx] & state & CEPH_OSD_EXISTS != 0 {
+                base.osd_state[idx] = 0;
+                if let Some(affinity) = base.osd_primary_affinity.get_mut(idx) {
+                    *affinity = CEPH_OSD_DEFAULT_PRIMARY_AFFINITY;
+                }
+                for addrs in [
+                    &mut base.osd_addrs_client,
+                    &mut base.osd_addrs_cluster,
+                    &mut base.osd_addrs_hb_front,
+                    &mut base.osd_addrs_hb_back,
+                ] {
+                    if let Some(addr) = addrs.get_mut(idx) {
+                        *addr = EntityAddrvec::default();
+                    }
+                }
+                if let Some(uuid) = base.osd_uuid.get_mut(idx) {
+                    *uuid = UuidD::default();
+                }
+                if let Some(info) = base.osd_info.get_mut(idx) {
+                    *info = OsdInfo::default();
+                }
+                if let Some(xinfo) = base.osd_xinfo.get_mut(idx) {
+                    *xinfo = OsdXInfo::default();
+                }
+            } else {
+                base.osd_state[idx] ^= state;
+            }
+        }
+
         for (osd, addrvec) in &self.new_up_client {
             let idx = *osd as usize;
             if idx >= base.osd_addrs_client.len() {
@@ -2316,26 +2382,6 @@ impl OSDMapIncremental {
             if idx < base.osd_state.len() {
                 base.osd_state[idx] |= CEPH_OSD_EXISTS | CEPH_OSD_UP;
                 base.osd_state[idx] &= !CEPH_OSD_STOP;
-            }
-        }
-
-        // new_state: XOR the state bits.  C++
-        // `OSDMap::apply_incremental` treats a zero value as a
-        // shorthand for "toggle the UP bit", so we need the same
-        // fallback or mark-up/down events encoded that way are
-        // silently dropped.
-        for (osd, state) in &self.new_state {
-            let idx = *osd as usize;
-            if idx < base.osd_state.len() {
-                let s = if *state == 0 { CEPH_OSD_UP } else { *state };
-                base.osd_state[idx] ^= s;
-            }
-        }
-
-        for (osd, weight) in &self.new_weight {
-            let idx = *osd as usize;
-            if idx < base.osd_weight.len() {
-                base.osd_weight[idx] = *weight;
             }
         }
 
@@ -2390,17 +2436,6 @@ impl OSDMapIncremental {
             base.pg_upmap_primaries.insert(*pgid, *primary);
         }
 
-        // Apply primary_affinity changes.  C++ stores this as a parallel
-        // vector indexed by osd_id; we mirror that shape.
-        for (osd, affinity) in &self.new_primary_affinity {
-            let idx = *osd as usize;
-            if idx >= base.osd_primary_affinity.len() {
-                base.osd_primary_affinity
-                    .resize(idx + 1, CEPH_OSD_DEFAULT_PRIMARY_AFFINITY);
-            }
-            base.osd_primary_affinity[idx] = *affinity;
-        }
-
         for (node, flags) in &self.new_crush_node_flags {
             if *flags == 0 {
                 base.crush_node_flags.remove(node);
@@ -2429,35 +2464,14 @@ impl OSDMapIncremental {
         base.new_removed_snaps = self.new_removed_snaps.clone();
         base.new_purged_snaps = self.new_purged_snaps.clone();
 
-        // Apply CRUSH map update if the incremental carries one.  The
-        // mon inlines the full CRUSH map bytes whenever the topology,
-        // weights, or rules change; any such change invalidates our
-        // cached placement and we must re-parse.  Without this, a
-        // later `pg_to_acting_osds` call runs against the STALE crush
-        // map and can produce a different acting set than the OSD's
-        // — the exact symptom that surfaces as a "misdirected op"
-        // silent drop during autoscale-driven pool splits.
-        if !self.crush.is_empty() {
-            let mut crush_buf = self.crush.clone();
-            match CrushMap::decode(&mut crush_buf) {
-                Ok(crush_map) => {
-                    tracing::debug!(
-                        target: "rados::osdclient::crush",
-                        "incremental epoch={} applying new CRUSH map ({} bytes)",
-                        self.epoch.as_u32(),
-                        self.crush.len(),
-                    );
-                    base.crush = Some(crush_map);
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        target: "rados::osdclient::crush",
-                        "incremental epoch={} failed to decode new CRUSH map: {:?}",
-                        self.epoch.as_u32(),
-                        e,
-                    );
-                }
-            }
+        if let Some(crush) = crush {
+            tracing::debug!(
+                target: "rados::osdclient::crush",
+                epoch = self.epoch.as_u32(),
+                bytes = self.crush.len(),
+                "Applying new CRUSH map",
+            );
+            base.crush = Some(crush);
         }
 
         // Update timestamps
@@ -2843,7 +2857,7 @@ impl OSDMap {
         }
 
         let raw = self.pg_to_osds(pg)?;
-        let placement = self.placement_from_raw(pool, pg, raw);
+        let placement = self.placement_from_raw(pool, pg, raw)?;
 
         {
             let mut cache = self.lock_acting_cache()?;
@@ -2852,8 +2866,23 @@ impl OSDMap {
         Ok(placement)
     }
 
-    fn placement_from_raw(&self, pool: &PgPool, pg: &PgId, raw: Vec<i32>) -> PgPlacement {
+    fn placement_from_raw(
+        &self,
+        pool: &PgPool,
+        pg: &PgId,
+        raw: Vec<i32>,
+    ) -> Result<PgPlacement, RadosError> {
         let mut up = raw.clone();
+        // Ceph removes nonexistent CRUSH results before applying upmaps.
+        if pool.is_replicated() {
+            up.retain(|&osd| self.exists(osd));
+        } else {
+            for osd in &mut up {
+                if !self.exists(*osd) {
+                    *osd = CRUSH_ITEM_NONE;
+                }
+            }
+        }
         self.apply_upmap(pg, &mut up);
         if pool.is_replicated() {
             up.retain(|&osd| osd >= 0 && self.is_up(osd));
@@ -2892,7 +2921,7 @@ impl OSDMap {
             has_nonempty_temp = !acting.is_empty();
             temp_primary = acting.iter().copied().find(|&osd| osd != CRUSH_ITEM_NONE);
             if pool.is_erasure() {
-                acting = pool.pgtemp_undo_primaryfirst_vec(true, &acting);
+                acting = pool.pgtemp_undo_primaryfirst_vec(has_nonempty_temp, &acting)?;
             }
         }
         if acting.is_empty() {
@@ -2905,13 +2934,13 @@ impl OSDMap {
                 up_primary
             }
         });
-        PgPlacement {
+        Ok(PgPlacement {
             raw,
             up,
             acting,
             up_primary,
             acting_primary,
-        }
+        })
     }
 
     /// Map a PG to its final acting OSD set via CRUSH + all overrides.
@@ -2967,7 +2996,7 @@ impl OSDMap {
             .pools
             .get(&pg.pool)
             .ok_or_else(|| RadosError::Protocol(format!("Pool {} not found", pg.pool)))?;
-        let placement = self.placement_from_raw(pool, pg, raw);
+        let placement = self.placement_from_raw(pool, pg, raw)?;
         self.ec_shard_from_placement(pool, pg, &placement)
     }
 
@@ -3285,14 +3314,7 @@ impl OSDMap {
     ///
     /// Reference: Ceph `OSDMap::is_up(int osd)` in `src/osd/OSDMap.h`
     pub fn is_up(&self, osd_id: i32) -> bool {
-        if osd_id < 0 {
-            return false;
-        }
-        let idx = osd_id as usize;
-        if idx >= self.osd_state.len() {
-            return false;
-        }
-        self.osd_state[idx] & CEPH_OSD_UP != 0
+        self.exists(osd_id) && self.osd_state[osd_id as usize] & CEPH_OSD_UP != 0
     }
 
     /// Check if an OSD is marked DOWN in the OSDMap.
@@ -3422,7 +3444,7 @@ impl OSDMap {
     ///
     /// Reference: Ceph `OSDMap::exists(int osd)` in `src/osd/OSDMap.h`
     pub fn exists(&self, osd_id: i32) -> bool {
-        if osd_id < 0 {
+        if osd_id < 0 || osd_id >= self.max_osd {
             return false;
         }
         let idx = osd_id as usize;
@@ -3662,6 +3684,10 @@ mark_versioned_encoding!(OsdXInfo);
 // Level 2/3: Feature-dependent types (encoding changes based on features)
 mark_feature_dependent_encoding!(PgPool);
 mark_feature_dependent_encoding!(OSDMap);
+
+#[cfg(test)]
+#[path = "tests/osdmap_correctness.rs"]
+mod correctness_tests;
 
 #[cfg(test)]
 mod tests {
@@ -4427,11 +4453,11 @@ mod tests {
         };
 
         assert_eq!(pool.pgtemp_primaryfirst_vec(&set), set);
-        assert_eq!(pool.pgtemp_undo_primaryfirst_vec(false, &set), set);
+        assert_eq!(pool.pgtemp_undo_primaryfirst_vec(false, &set).unwrap(), set);
 
         pool.flags = PgPool::FLAG_EC_OPTIMIZATIONS;
         assert_eq!(pool.pgtemp_primaryfirst_vec(&set), set);
-        assert_eq!(pool.pgtemp_undo_primaryfirst_vec(false, &set), set);
+        assert_eq!(pool.pgtemp_undo_primaryfirst_vec(false, &set).unwrap(), set);
 
         pool.flags = 0;
         let mut inc = OSDMapIncremental::new(Epoch::new(1));
@@ -4439,14 +4465,16 @@ mod tests {
         inc.apply_to(&mut map).unwrap();
         assert_eq!(pool.pgtemp_primaryfirst_vec(&set), set);
         assert_eq!(
-            pool.pgtemp_undo_primaryfirst_vec(map.pg_temp.contains_key(&pgid), &set),
+            pool.pgtemp_undo_primaryfirst_vec(map.pg_temp.contains_key(&pgid), &set)
+                .unwrap(),
             set
         );
 
         pool.flags = PgPool::FLAG_EC_OPTIMIZATIONS;
         assert_eq!(pool.pgtemp_primaryfirst_vec(&set), set);
         assert_eq!(
-            pool.pgtemp_undo_primaryfirst_vec(map.pg_temp.contains_key(&pgid), &set),
+            pool.pgtemp_undo_primaryfirst_vec(map.pg_temp.contains_key(&pgid), &set)
+                .unwrap(),
             set
         );
 
@@ -4483,7 +4511,8 @@ mod tests {
                 );
             }
             assert_eq!(
-                pool.pgtemp_undo_primaryfirst_vec(map.pg_temp.contains_key(&pgid), &encoded),
+                pool.pgtemp_undo_primaryfirst_vec(map.pg_temp.contains_key(&pgid), &encoded)
+                    .unwrap(),
                 set,
                 "mask {mask}"
             );
